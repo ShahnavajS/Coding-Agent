@@ -1,0 +1,36 @@
+[project]
+name = "production-coding-assistant-backend"
+version = "0.1.0"
+description = "Modular backend for a desktop AI coding assistant"
+requires-python = ">=3.11"
+dependencies = [
+  "flask==3.0.0",
+  "flask-cors==4.0.0",
+  "python-dotenv==1.0.0",
+  "requests==2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+]
+
+[tool.pytest.ini_options]
+# Add the backend directory to sys.path so tests can import assistant_backend directly.
+pythonpath = ["backend"]
+testpaths = ["tests"]
+# Show short test summary for failures and errors only.
+addopts = "-ra -q"
+# Treat ResourceWarnings (unclosed files/connections) as errors so they can't sneak in.
+filterwarnings = [
+  "error::ResourceWarning",
+]
+
+[tool.coverage.run]
+source = ["backend/assistant_backend"]
+omit = ["*/__pycache__/*", "*/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

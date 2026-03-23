@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+
+def add(left: float, right: float) -> float:
+    return left + right
+
+
+def subtract(left: float, right: float) -> float:
+    return left - right
+
+
+def multiply(left: float, right: float) -> float:
+    return left * right
+
+
+def divide(left: float, right: float) -> float:
+    if right == 0:
+        raise ValueError("Cannot divide by zero.")
+    return left / right
+
+
+OPERATIONS = {
+    "+": add,
+    "-": subtract,
+    "*": multiply,
+    "/": divide,
+}
+
+
+def main() -> None:
+    print("Simple Calculator")
+    print("Type q at any prompt to exit.\n")
+
+    while True:
+        operator = input("Operator (+, -, *, /): ").strip()
+        if operator.lower() == "q":
+            print("Goodbye.")
+            return
+        if operator not in OPERATIONS:
+            print("Unsupported operator. Try again.\n")
+            continue
+
+        raw_left = input("First number: ").strip()
+        if raw_left.lower() == "q":
+            print("Goodbye.")
+            return
+
+        raw_right = input("Second number: ").strip()
+        if raw_right.lower() == "q":
+            print("Goodbye.")
+            return
+
+        try:
+            left = float(raw_left)
+            right = float(raw_right)
+            result = OPERATIONS[operator](left, right)
+        except ValueError as error:
+            print(f"Error: {error}\n")
+            continue
+
+        print(f"Result: {result}\n")
+
+
+if __name__ == "__main__":
+    main()

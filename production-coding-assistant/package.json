@@ -1,0 +1,28 @@
+{
+  "name": "production-coding-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop AI coding assistant with modular Python backend and React frontend.",
+  "author": "sanus",
+  "license": "UNLICENSED",
+  "productName": "Production Coding Assistant",
+  "main": ".vite/build/main.js",
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "start:backend": "..\\.venv\\Scripts\\python.exe backend\\server.py",
+    "electron:dev": "electron-forge start",
+    "electron:package": "electron-forge package",
+    "electron:make": "electron-forge make"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.8.1",
+    "@electron-forge/maker-deb": "^7.8.1",
+    "@electron-forge/maker-rpm": "^7.8.1",
+    "@electron-forge/maker-squirrel": "^7.8.1",
+    "@electron-forge/maker-zip": "^7.8.1",
+    "@electron-forge/plugin-vite": "^7.8.1",
+    "electron": "^35.0.0",
+    "vite": "^6.0.0"
+  }
+}

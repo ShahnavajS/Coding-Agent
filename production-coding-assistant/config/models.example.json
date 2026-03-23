@@ -1,0 +1,20 @@
+{
+  "providers": {
+    "openai": {
+      "model": "gpt-5",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    },
+    "anthropic": {
+      "model": "claude-sonnet-4-20250514",
+      "apiKeyEnv": "ANTHROPIC_API_KEY"
+    },
+    "ollama": {
+      "model": "qwen3-coder",
+      "baseUrl": "http://localhost:11434/api"
+    },
+    "local_path": {
+      "model": "local-model",
+      "modelPath": ""
+    }
+  }
+}

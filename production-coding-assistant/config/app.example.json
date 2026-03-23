@@ -1,0 +1,7 @@
+{
+  "backendHost": "0.0.0.0",
+  "backendPort": 5000,
+  "workspacePath": "./workspace",
+  "defaultProvider": "ollama",
+  "shellTimeoutSeconds": 30
+}

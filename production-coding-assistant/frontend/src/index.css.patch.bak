@@ -1,0 +1,29 @@
+.btn-danger:hover { background: #6e2020; }
+
+/* Legacy compat — duplicate the rules directly (Tailwind v4 doesn't support @apply on custom classes) */
+.button-primary {
+  display: flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 10px; font-size: 12px;
+  border-radius: 3px; background: var(--accent-blue);
+  color: white; border: none; cursor: pointer;
+  transition: background 0.1s;
+}
+.button-primary:hover { background: #006ab3; }
+
+.button-secondary {
+  display: flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 10px; font-size: 12px;
+  border-radius: 3px; background: transparent;
+  color: var(--text-primary); border: 1px solid var(--border);
+  cursor: pointer; transition: background 0.1s;
+}
+.button-secondary:hover { background: var(--bg-hover); }
+
+.button-danger {
+  display: flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 10px; font-size: 12px;
+  border-radius: 3px; background: #5a1d1d;
+  color: #f97583; border: 1px solid #6e2020;
+  cursor: pointer; transition: background 0.1s;
+}
+.button-danger:hover { background: #6e2020; }
