@@ -1,5 +1,8 @@
 {
+  "pythonPath": "C:/Program Files/Python313/python.exe",
   "extraPaths": [
-    "production-coding-assistant/backend"
+    "production-coding-assistant/backend",
+    "C:/Program Files/Python313/Lib/site-packages",
+    "C:/Users/sanus/AppData/Roaming/Python/Python313/site-packages"
   ]
 }

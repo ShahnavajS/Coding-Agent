@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, shell, dialog } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
@@ -174,3 +174,13 @@ ipcMain.handle("desktop:get-meta", () => ({
 }));
 
 ipcMain.handle("desktop:open-external", (_e, url: string) => shell.openExternal(url));
+
+ipcMain.handle("desktop:select-folder", async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openDirectory", "createDirectory"],
+    title: "Select Workspace Folder"
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});

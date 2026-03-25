@@ -119,3 +119,13 @@ export interface AIAgentResponse {
   filesModified: string[];
   sessionId: string;
 }
+
+declare global {
+  interface Window {
+    desktopBridge: {
+      getMeta: () => Promise<any>;
+      selectFolder: () => Promise<string | null>;
+      onBackendLog: (callback: (message: string) => void) => () => void;
+    };
+  }
+}

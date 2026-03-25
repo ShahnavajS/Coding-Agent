@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getMeta: () => ipcRenderer.invoke("desktop:get-meta"),
+  selectFolder: () => ipcRenderer.invoke("desktop:select-folder"),
   onBackendLog: (callback: (message: string) => void) => {
     const listener = (_event: unknown, message: string) => callback(message);
     ipcRenderer.on("backend-log", listener);

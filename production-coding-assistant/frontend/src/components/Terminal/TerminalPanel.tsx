@@ -58,7 +58,7 @@ export default function TerminalPanel() {
   };
 
   return (
-    <div className="flex flex-col h-[260px] shrink-0 bg-[#0f0f11] border-t border-[#27272a] shadow-[0_-4px_12px_rgba(0,0,0,0.4)] z-10 relative">
+    <div className="flex flex-col h-[260px] shrink-0 bg-[#0f0f11] border-t border-[#27272a] shadow-[0_-4px_12px_rgba(0,0,0,0.4)] z-0 relative">
       {/* Panel tabs bar */}
       <div className="flex items-center h-8 bg-[#18181b] border-b border-[#27272a] px-2 shrink-0 select-none">
         {(["terminal", "logs", "errors"] as PanelTab[]).map((t) => (

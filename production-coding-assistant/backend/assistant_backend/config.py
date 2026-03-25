@@ -167,6 +167,8 @@ def load_app_settings() -> AppSettings:
 
     if SETTINGS_PATH.exists():
         raw = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        if "workspacePath" in raw:
+            settings.workspace_path = str(raw["workspacePath"])
         settings.default_provider = str(
             raw.get("defaultProvider", settings.default_provider)
         )
@@ -209,6 +211,8 @@ def save_app_settings(settings: AppSettings) -> None:
 
 def update_app_settings(payload: dict[str, Any]) -> AppSettings:
     settings = load_app_settings()
+    if "workspacePath" in payload:
+        settings.workspace_path = str(payload["workspacePath"])
     if "defaultProvider" in payload:
         settings.default_provider = str(payload["defaultProvider"])
     if "shellTimeoutSeconds" in payload:

@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import {
   ChevronRight, FilePlus2, FolderPlus, RefreshCw,
-  Search, Trash2, MoreHorizontal, Folder,
+  Search, Trash2, MoreHorizontal, Folder, FolderOpen
 } from "lucide-react";
 import { useAppStore } from "../../store/useAppStore";
-import { fileAPI } from "../../utils/api";
+import { fileAPI, settingsAPI } from "../../utils/api";
 import { buildFileTree, getFileIcon, getLanguageFromFileName } from "../../utils/fileUtils";
 import type { FileNode } from "../../types";
 
@@ -34,26 +34,26 @@ function FileTreeItem({
   const isFolder = node.type === "folder";
 
   return (
-    <div className="relative isolate">
+    <div className="relative isolate mb-0.5">
       {/* Row */}
       <div
-        className="group flex items-center gap-1.5 h-6 pr-2 cursor-pointer text-[13px] text-zinc-300 border border-transparent hover:bg-[#18181b]/80 hover:text-white"
-        style={{ paddingLeft: indent }}
+        className="group flex items-center gap-1.5 h-7 mx-1 pr-2 rounded-md cursor-pointer text-[13px] text-zinc-400 border border-transparent hover:bg-zinc-800/60 hover:text-zinc-100 transition-colors"
+        style={{ paddingLeft: indent - 8 }}
         onClick={() => isFolder ? onToggleFolder(node) : onFileSelect(node)}
       >
         {/* Indent guide lines */}
         {Array.from({ length: depth }).map((_, i) => (
-          <span key={i} className="absolute top-0 bottom-0 w-px bg-zinc-800" style={{ left: i * 14 + 20 }} />
+          <span key={i} className="absolute top-0 bottom-0 w-px bg-zinc-800/40 group-hover:bg-zinc-700/60" style={{ left: i * 14 + 18 }} />
         ))}
 
         {/* Chevron / spacer */}
         <span className="w-4 shrink-0 flex items-center justify-center">
           {isFolder && (
             <ChevronRight
-              size={13}
+              size={14}
               style={{
                 transform: node.isOpen ? "rotate(90deg)" : "",
-                transition: "transform 0.15s ease",
+                transition: "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
               }}
               className="text-zinc-500 group-hover:text-zinc-300"
             />
@@ -76,49 +76,52 @@ function FileTreeItem({
         </span>
 
         {/* Context menu trigger */}
-        <div className="hidden group-hover:flex items-center gap-0.5 ml-auto pr-1">
+        <div className="hidden group-hover:flex items-center ml-auto pl-2">
           <button
-            className="w-5 h-5 flex flex-col items-center justify-center rounded pl-0.5 text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
+            className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700/80 transition-all opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0"
             onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
           >
-            <MoreHorizontal size={14} />
+            <MoreHorizontal size={15} />
           </button>
         </div>
       </div>
 
       {/* Context menu */}
       {menuOpen && (
+        <>
+        <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
         <div
-          className="absolute right-1 top-6 z-50 w-40 bg-zinc-900 border border-zinc-700 shadow-[0_8px_32px_rgba(0,0,0,0.8)] rounded-md overflow-hidden"
+          className="absolute right-4 top-7 z-50 w-44 bg-zinc-900 border border-zinc-800/80 shadow-2xl rounded-lg overflow-hidden py-1 backdrop-blur-xl"
           onClick={(e) => e.stopPropagation()}
         >
           {isFolder && (
             <>
               <button 
-                className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-zinc-200 bg-transparent border-none cursor-pointer text-left hover:bg-zinc-800 transition-colors"
+                className="flex items-center gap-3 w-full px-3 py-2.5 text-[13px] font-medium text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
                 onClick={() => { onCreatePath("file", node.path); setMenuOpen(false); }}
               >
-                <FilePlus2 size={13} className="text-teal-400" />
+                <FilePlus2 size={14} className="text-blue-400" />
                 New File
               </button>
               <button 
-                className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-zinc-200 bg-transparent border-none cursor-pointer text-left hover:bg-zinc-800 transition-colors"
+                className="flex items-center gap-3 w-full px-3 py-2.5 text-[13px] font-medium text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
                 onClick={() => { onCreatePath("folder", node.path); setMenuOpen(false); }}
               >
-                <FolderPlus size={13} className="text-teal-400" />
+                <FolderPlus size={14} className="text-amber-400" />
                 New Folder
               </button>
-              <div className="h-px bg-zinc-800 my-0.5" />
+              <div className="h-px bg-zinc-800/60 my-1 mx-2" />
             </>
           )}
           <button
-            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-red-400 bg-transparent border-none cursor-pointer text-left hover:bg-red-950/40 hover:text-red-300 transition-colors"
+            className="flex items-center gap-3 w-full px-3 py-2.5 text-[13px] font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
             onClick={() => { onDeletePath(node); setMenuOpen(false); }}
           >
-            <Trash2 size={13} />
+            <Trash2 size={14} />
             Delete
           </button>
         </div>
+        </>
       )}
 
       {/* Children */}
@@ -158,6 +161,28 @@ export default function Sidebar() {
   const visible = useMemo(() => filterTree(files, q), [files, q]);
 
   const reload = async () => setFiles(buildFileTree(await fileAPI.listFiles()));
+
+  const handleOpenFolder = async () => {
+    let path: string | null = null;
+    if (window.desktopBridge) {
+      try {
+        path = await window.desktopBridge.selectFolder();
+      } catch {
+        setStatusText("Folder selection failed.");
+        return;
+      }
+    } else {
+      path = window.prompt("Enter the absolute path to the workspace folder:")?.trim() || null;
+    }
+    if (!path) return;
+    try {
+      await settingsAPI.save({ workspacePath: path } as any);
+      await reload();
+      setStatusText(`Opened workspace: ${path}`);
+    } catch (e) {
+      setStatusText(`Failed to open folder: ${e instanceof Error ? e.message : e}`);
+    }
+  };
 
   const handleFileSelect = async (node: FileNode) => {
     if (node.type !== "file") return;
@@ -200,31 +225,34 @@ export default function Sidebar() {
   if (!isLeftSidebarOpen) return null;
 
   return (
-    <div className="w-[260px] shrink-0 flex flex-col bg-[#0f0f11] border-r border-[#27272a] overflow-hidden drop-shadow-md z-10 relative">
+    <div className="w-[260px] shrink-0 flex flex-col bg-[#0f0f11] border-r border-[#27272a] overflow-hidden drop-shadow-md z-[1] relative">
       {/* Header */}
-      <div className="group flex items-center justify-between px-3 py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500 shrink-0">
-        <span className="mt-1">Explorer</span>
-        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button className="w-6 h-6 flex items-center justify-center rounded text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors" title="New File" onClick={() => void handleCreate("file")}>
-            <FilePlus2 size={14} />
+      <div className="group flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-[0.1em] text-zinc-500 shrink-0">
+        <span className="mt-0.5">Explorer</span>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors transform hover:scale-105" title="New File" onClick={() => void handleCreate("file")}>
+            <FilePlus2 size={15} />
           </button>
-          <button className="w-6 h-6 flex items-center justify-center rounded text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors" title="New Folder" onClick={() => void handleCreate("folder")}>
-            <FolderPlus size={14} />
+          <button className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors transform hover:scale-105" title="New Folder" onClick={() => void handleCreate("folder")}>
+            <FolderPlus size={15} />
           </button>
-          <button className="w-6 h-6 flex items-center justify-center rounded text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors" title="Refresh" onClick={() => void reload()}>
+          <button className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors transform hover:scale-105" title="Refresh" onClick={() => void reload()}>
             <RefreshCw size={14} />
+          </button>
+          <button className="w-6 h-6 flex items-center justify-center rounded-md text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors transform hover:scale-105 ml-0.5" title="Open Folder..." onClick={() => void handleOpenFolder()}>
+            <FolderOpen size={15} />
           </button>
         </div>
       </div>
 
       {/* Search */}
-      <div className="px-3 pb-2 shrink-0 relative">
-        <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none mt-[-4px]" size={13} />
+      <div className="px-3 pb-3 shrink-0 relative">
+        <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none mt-[2px]" size={14} />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search files…"
-          className="w-full h-7 bg-zinc-900/80 border border-zinc-800 rounded placeholder-zinc-600 focus:outline-none focus:border-blue-500/50 focus:bg-zinc-900 transition-colors pl-7 pr-2 text-xs text-zinc-200 font-sans shadow-inner"
+          className="w-full h-8 bg-zinc-900/50 border border-zinc-800/80 rounded-lg placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 focus:bg-zinc-900 transition-all pl-9 pr-3 text-[13px] text-zinc-200 font-sans shadow-sm"
         />
       </div>
 

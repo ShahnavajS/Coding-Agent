@@ -193,6 +193,7 @@ def run_agent(
     append_message(session_id, "user", message, {"context": context})
 
     # ── Route by mode ────────────────────────────────────────────────
+    result: dict[str, Any]
     if mode == AgentMode.PLAN:
         result = run_plan_agent(message, session_id, context, provider_name)
     elif mode == AgentMode.ASK:
