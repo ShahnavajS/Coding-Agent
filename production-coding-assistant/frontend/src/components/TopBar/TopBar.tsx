@@ -42,83 +42,65 @@ export default function TopBar() {
   };
 
   return (
-    <div className="titlebar" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
+    <div 
+      className="flex items-center h-10 shrink-0 bg-[#18181b]/90 backdrop-blur-md border-b border-zinc-800/80 px-4 gap-4 select-none"
+      style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+    >
       {/* Left: app name + provider badge */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, WebkitAppRegion: "no-drag" } as React.CSSProperties}>
-        <span style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 12,
-          color: "var(--text-primary)",
-          fontWeight: 600,
-          letterSpacing: 1,
-        }}>
-          Production Coding Assistant
+      <div 
+        className="flex items-center gap-3 shrink-0" 
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      >
+        <span className="font-mono text-[13px] font-semibold text-zinc-200 tracking-wide drop-shadow-sm">
+          Production AI Assistant
         </span>
-        <span style={{
-          fontSize: 11,
-          color: "var(--text-inactive)",
-          background: "rgba(255,255,255,0.06)",
-          border: "1px solid var(--border)",
-          borderRadius: 3,
-          padding: "1px 6px",
-        }}>
+        <span className="px-2 py-0.5 text-[10px] uppercase tracking-wider font-bold rounded-full border border-zinc-700 bg-zinc-800/60 text-teal-400">
           {settings?.defaultProvider || "groq"}
         </span>
       </div>
 
       {/* Centre: status text */}
-      <div style={{
-        flex: 1,
-        textAlign: "center",
-        fontSize: 11,
-        color: "var(--text-inactive)",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        padding: "0 24px",
-        WebkitAppRegion: "drag",
-      } as React.CSSProperties}>
+      <div 
+        className="flex-1 text-center text-xs text-zinc-500 font-medium truncate px-6 uppercase tracking-widest drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]"
+        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+      >
         {statusText}
       </div>
 
       {/* Right: actions */}
-      <div style={{ display: "flex", alignItems: "center", gap: 4, WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+      <div 
+        className="flex items-center gap-1 shrink-0" 
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      >
         <button
           onClick={() => void handleSave()}
-          className="btn-secondary"
-          style={{ height: 22, padding: "0 8px", fontSize: 11, gap: 4 }}
+          className="btn-secondary h-6 px-2.5 text-[11px] font-medium tracking-wide shadow-black hover:border-zinc-500 hover:text-white"
           title="Preview & save"
         >
-          <Save size={12} />
+          <Save size={13} className="text-zinc-400" />
           Save
         </button>
 
-        <div style={{ width: 1, height: 14, background: "var(--border)", margin: "0 4px" }} />
+        <div className="w-px h-4 bg-zinc-700 mx-2" />
 
-        <div
-          style={{
-            display: "flex", alignItems: "center", gap: 4,
-            fontSize: 11, color: "var(--text-secondary)",
-            cursor: "pointer", padding: "2px 6px", borderRadius: 3, transition: "background 0.1s",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-        >
-          <GitBranch size={12} />
+        <div className="flex items-center gap-1.5 px-2 py-1 mx-1 text-[11px] font-medium text-zinc-400 rounded-md cursor-pointer transition-all hover:bg-zinc-800 hover:text-zinc-200">
+          <GitBranch size={13} className="text-teal-500/80" />
           <span>{currentBranch || "workspace"}</span>
         </div>
 
         <button
           onClick={toggleSettings}
-          className="icon-btn"
-          style={{ width: 24, height: 24 }}
+          className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer ml-1"
           title="Settings"
         >
-          <Settings2 size={14} strokeWidth={1.5} />
+          <Settings2 size={15} />
         </button>
 
-        <button className="icon-btn" style={{ width: 24, height: 24 }} title="Notifications">
-          <Bell size={14} strokeWidth={1.5} />
+        <button 
+          className="p-1.5 rounded-md text-zinc-400 hover:text-blue-400 hover:bg-blue-900/20 transition-colors cursor-pointer" 
+          title="Notifications"
+        >
+          <Bell size={15} />
         </button>
       </div>
     </div>

@@ -30,7 +30,7 @@ def generate(prompt: str, model: str, api_key_env: str) -> ProviderResponse:
             },
             json={
                 "model": model,
-                "max_tokens": 1200,
+                "max_tokens": 4096,
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=_TIMEOUT_SECONDS,

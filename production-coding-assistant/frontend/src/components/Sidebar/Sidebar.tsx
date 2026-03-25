@@ -30,70 +30,58 @@ function FileTreeItem({
   onCreatePath(type: "file" | "folder", basePath?: string): void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const indent = depth * 12 + 8;
+  const indent = depth * 14 + 10;
   const isFolder = node.type === "folder";
 
   return (
-    <div style={{ position: "relative" }}>
+    <div className="relative isolate">
       {/* Row */}
       <div
-        className="file-item"
+        className="group flex items-center gap-1.5 h-6 pr-2 cursor-pointer text-[13px] text-zinc-300 border border-transparent hover:bg-[#18181b]/80 hover:text-white"
         style={{ paddingLeft: indent }}
         onClick={() => isFolder ? onToggleFolder(node) : onFileSelect(node)}
       >
         {/* Indent guide lines */}
         {Array.from({ length: depth }).map((_, i) => (
-          <span key={i} style={{
-            position: "absolute",
-            left: i * 12 + 20,
-            top: 0, bottom: 0,
-            width: 1,
-            background: "var(--border)",
-            opacity: 0.3,
-          }} />
+          <span key={i} className="absolute top-0 bottom-0 w-px bg-zinc-800" style={{ left: i * 14 + 20 }} />
         ))}
 
         {/* Chevron / spacer */}
-        <span style={{ width: 14, flexShrink: 0, display: "flex", alignItems: "center" }}>
+        <span className="w-4 shrink-0 flex items-center justify-center">
           {isFolder && (
             <ChevronRight
-              size={12}
+              size={13}
               style={{
                 transform: node.isOpen ? "rotate(90deg)" : "",
-                transition: "transform 0.1s",
-                color: "var(--text-inactive)",
+                transition: "transform 0.15s ease",
               }}
+              className="text-zinc-500 group-hover:text-zinc-300"
             />
           )}
         </span>
 
         {/* Icon */}
-        <span style={{ fontSize: 12, width: 16, flexShrink: 0, lineHeight: 1 }}>
+        <span className="text-[12px] w-4 shrink-0 flex items-center leading-none">
           {isFolder
-            ? <Folder size={13} style={{ color: "#e3b341" }} />
-            : <span style={{ color: fileColour(node.name), fontFamily: "var(--font-mono)", fontSize: 11 }}>
+            ? <Folder size={14} className="text-amber-500/90" />
+            : <span style={{ color: fileColour(node.name) }} className="font-mono text-[11px] drop-shadow-sm">
                 {getFileIcon(node.name)}
               </span>
           }
         </span>
 
         {/* Name */}
-        <span style={{
-          flex: 1, minWidth: 0, overflow: "hidden",
-          textOverflow: "ellipsis", whiteSpace: "nowrap",
-          fontSize: 13, color: "var(--text-primary)",
-        }}>
+        <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap tracking-wide">
           {node.name}
         </span>
 
         {/* Context menu trigger */}
-        <div className="file-item-actions">
+        <div className="hidden group-hover:flex items-center gap-0.5 ml-auto pr-1">
           <button
-            className="icon-btn"
-            style={{ width: 16, height: 16 }}
+            className="w-5 h-5 flex flex-col items-center justify-center rounded pl-0.5 text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
             onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
           >
-            <MoreHorizontal size={12} />
+            <MoreHorizontal size={14} />
           </button>
         </div>
       </div>
@@ -101,39 +89,33 @@ function FileTreeItem({
       {/* Context menu */}
       {menuOpen && (
         <div
-          style={{
-            position: "absolute",
-            right: 4,
-            top: 24,
-            zIndex: 50,
-            width: 160,
-            background: "#252526",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
-            overflow: "hidden",
-          }}
+          className="absolute right-1 top-6 z-50 w-40 bg-zinc-900 border border-zinc-700 shadow-[0_8px_32px_rgba(0,0,0,0.8)] rounded-md overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
           {isFolder && (
             <>
-              <button className="file-ctx-btn" onClick={() => { onCreatePath("file", node.path); setMenuOpen(false); }}>
-                <FilePlus2 size={12} style={{ color: "var(--accent-teal)" }} />
+              <button 
+                className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-zinc-200 bg-transparent border-none cursor-pointer text-left hover:bg-zinc-800 transition-colors"
+                onClick={() => { onCreatePath("file", node.path); setMenuOpen(false); }}
+              >
+                <FilePlus2 size={13} className="text-teal-400" />
                 New File
               </button>
-              <button className="file-ctx-btn" onClick={() => { onCreatePath("folder", node.path); setMenuOpen(false); }}>
-                <FolderPlus size={12} style={{ color: "var(--accent-teal)" }} />
+              <button 
+                className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-zinc-200 bg-transparent border-none cursor-pointer text-left hover:bg-zinc-800 transition-colors"
+                onClick={() => { onCreatePath("folder", node.path); setMenuOpen(false); }}
+              >
+                <FolderPlus size={13} className="text-teal-400" />
                 New Folder
               </button>
-              <div style={{ height: 1, background: "var(--border)", margin: "2px 0" }} />
+              <div className="h-px bg-zinc-800 my-0.5" />
             </>
           )}
           <button
-            className="file-ctx-btn"
-            style={{ color: "var(--accent-red)" }}
+            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-red-400 bg-transparent border-none cursor-pointer text-left hover:bg-red-950/40 hover:text-red-300 transition-colors"
             onClick={() => { onDeletePath(node); setMenuOpen(false); }}
           >
-            <Trash2 size={12} />
+            <Trash2 size={13} />
             Delete
           </button>
         </div>
@@ -218,39 +200,40 @@ export default function Sidebar() {
   if (!isLeftSidebarOpen) return null;
 
   return (
-    <div className="sidebar">
+    <div className="w-[260px] shrink-0 flex flex-col bg-[#0f0f11] border-r border-[#27272a] overflow-hidden drop-shadow-md z-10 relative">
       {/* Header */}
-      <div className="sidebar-section-header">
-        <span>Explorer</span>
-        <div className="sidebar-actions">
-          <button className="sidebar-action-btn" title="New File" onClick={() => void handleCreate("file")}>
-            <FilePlus2 size={13} />
+      <div className="group flex items-center justify-between px-3 py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500 shrink-0">
+        <span className="mt-1">Explorer</span>
+        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button className="w-6 h-6 flex items-center justify-center rounded text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors" title="New File" onClick={() => void handleCreate("file")}>
+            <FilePlus2 size={14} />
           </button>
-          <button className="sidebar-action-btn" title="New Folder" onClick={() => void handleCreate("folder")}>
-            <FolderPlus size={13} />
+          <button className="w-6 h-6 flex items-center justify-center rounded text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors" title="New Folder" onClick={() => void handleCreate("folder")}>
+            <FolderPlus size={14} />
           </button>
-          <button className="sidebar-action-btn" title="Refresh" onClick={() => void reload()}>
-            <RefreshCw size={13} />
+          <button className="w-6 h-6 flex items-center justify-center rounded text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors" title="Refresh" onClick={() => void reload()}>
+            <RefreshCw size={14} />
           </button>
         </div>
       </div>
 
       {/* Search */}
-      <div className="sidebar-search" style={{ position: "relative" }}>
-        <Search className="sidebar-search-icon" size={12} />
+      <div className="px-3 pb-2 shrink-0 relative">
+        <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none mt-[-4px]" size={13} />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search files…"
+          className="w-full h-7 bg-zinc-900/80 border border-zinc-800 rounded placeholder-zinc-600 focus:outline-none focus:border-blue-500/50 focus:bg-zinc-900 transition-colors pl-7 pr-2 text-xs text-zinc-200 font-sans shadow-inner"
         />
       </div>
 
       {/* Tree */}
-      <div className="file-tree">
+      <div className="flex-1 overflow-y-auto py-1 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-zinc-800 [&::-webkit-scrollbar-track]:bg-transparent hover:[&::-webkit-scrollbar-thumb]:bg-zinc-700">
         {visible.length === 0
           ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 120, color: "var(--text-inactive)", fontSize: 12, gap: 6 }}>
-              <Folder size={24} style={{ opacity: 0.3 }} />
+            <div className="flex flex-col items-center justify-center h-28 text-zinc-600 text-xs gap-2">
+              <Folder size={28} className="opacity-20" strokeWidth={1.5} />
               {q ? "No matches" : "Workspace is empty"}
             </div>
           )
@@ -267,27 +250,9 @@ export default function Sidebar() {
       </div>
 
       {/* Footer */}
-      <div style={{
-        borderTop: "1px solid var(--border)",
-        padding: "4px 12px",
-        fontSize: 11,
-        color: "var(--text-inactive)",
-        flexShrink: 0,
-      }}>
-        {files.length} items · workspace
+      <div className="border-t border-zinc-800/60 px-3 py-1.5 text-[10px] uppercase tracking-widest text-zinc-600 shrink-0 font-bold">
+        {files.length} items
       </div>
-
-      {/* Inline style for context menu buttons */}
-      <style>{`
-        .file-ctx-btn {
-          display: flex; align-items: center; gap: 7px;
-          width: 100%; padding: 6px 10px;
-          font-size: 12px; color: var(--text-primary);
-          background: transparent; border: none; cursor: pointer;
-          text-align: left; transition: background 0.1s;
-        }
-        .file-ctx-btn:hover { background: var(--bg-hover); }
-      `}</style>
     </div>
   );
 }

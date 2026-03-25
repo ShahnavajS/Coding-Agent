@@ -5,25 +5,30 @@ from typing import Any
 
 
 class RiskLevel:
-    """Constants for plan risk levels. Use these instead of raw strings."""
-    LOW = "low"
+    LOW    = "low"
     MEDIUM = "medium"
-    HIGH = "high"
+    HIGH   = "high"
 
 
 class StepStatus:
-    """Constants for plan step statuses."""
-    PENDING = "pending"
-    RUNNING = "running"
+    PENDING   = "pending"
+    RUNNING   = "running"
     COMPLETED = "completed"
-    FAILED = "failed"
+    FAILED    = "failed"
+
+
+class AgentMode:
+    """Mode the agent operates in — sent from the frontend."""
+    AGENT = "agent"   # default: generate + execute code
+    PLAN  = "plan"    # research + produce a structured plan, no code execution
+    ASK   = "ask"     # conversational Q&A, no code execution
 
 
 @dataclass
 class PlanStep:
     id: str
     name: str
-    status: str          # Use StepStatus constants
+    status: str
     description: str
     details: str = ""
     error: str = ""
@@ -35,19 +40,36 @@ class PlanStep:
 @dataclass
 class Plan:
     summary: str
-    risk_level: str      # Use RiskLevel constants
+    risk_level: str
     files_of_interest: list[str] = field(default_factory=list)
-    validation_plan: list[str] = field(default_factory=list)
-    steps: list[PlanStep] = field(default_factory=list)
+    validation_plan: list[str]   = field(default_factory=list)
+    steps: list[PlanStep]        = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "summary": self.summary,
-            "riskLevel": self.risk_level,
-            "filesOfInterest": self.files_of_interest,
+            "summary":        self.summary,
+            "riskLevel":      self.risk_level,
+            "filesOfInterest":self.files_of_interest,
             "validationPlan": self.validation_plan,
-            "steps": [step.to_dict() for step in self.steps],
+            "steps":          [s.to_dict() for s in self.steps],
         }
+
+
+@dataclass
+class PlanDocument:
+    """A structured plan document produced by the Plan agent."""
+    title: str
+    tldr: str
+    steps: list[str]
+    relevant_files: list[str]
+    verification: list[str]
+    decisions: list[str]
+    considerations: list[str]
+    risk_level: str
+    raw_markdown: str           # full markdown as returned by the provider
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass

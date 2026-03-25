@@ -25,6 +25,18 @@ from assistant_backend.tools.filesystem_tool import (
 from assistant_backend.tools.shell_tool import execute_command
 from assistant_backend.tools.ast_editor import structured_update
 from assistant_backend.tools.structured_editor import apply_pending_diff, preview_file_update
+from assistant_backend.tools.grep_tool import grep_workspace, find_and_replace
+from assistant_backend.tools.git_tool import (
+    git_status, git_diff, git_log, git_current_branch, git_branches,
+    git_add, git_commit, git_create_branch, git_checkout,
+    git_stash, git_stash_pop, git_show_file, GitNotAvailableError,
+)
+from assistant_backend.tools.code_analysis_tool import (
+    extract_symbols, analyze_complexity, detect_code_smells, find_symbol_references,
+)
+from assistant_backend.tools.dependency_tool import (
+    analyze_dependencies, get_project_structure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +242,199 @@ def create_app() -> Flask:
                 return _bad_request(str(exc))
             return jsonify({"success": True, "data": settings_obj.to_public_dict()})
         return jsonify({"success": True, "data": get_cached_settings().to_public_dict()})
+
+    # ------------------------------------------------------------ search/grep
+
+    @app.route("/api/search/grep", methods=["POST"])
+    def search_grep():
+        payload = request.get_json(force=True) or {}
+        query = payload.get("query", "").strip()
+        if not query:
+            return _bad_request("'query' is required")
+        result = grep_workspace(
+            query,
+            is_regex=bool(payload.get("isRegex", False)),
+            case_sensitive=bool(payload.get("caseSensitive", True)),
+            include_globs=payload.get("includeGlobs"),
+            context_lines=int(payload.get("contextLines", 2)),
+            max_results=int(payload.get("maxResults", 200)),
+        )
+        return jsonify({"success": True, "data": result})
+
+    @app.route("/api/search/replace", methods=["POST"])
+    def search_replace():
+        payload = request.get_json(force=True) or {}
+        path = payload.get("path", "").strip()
+        search = payload.get("search", "").strip()
+        replace = payload.get("replace", "")
+        if not path or not search:
+            return _bad_request("'path' and 'search' are required")
+        try:
+            result = find_and_replace(
+                path, search, replace,
+                is_regex=bool(payload.get("isRegex", False)),
+                case_sensitive=bool(payload.get("caseSensitive", True)),
+                preview_only=bool(payload.get("previewOnly", True)),
+            )
+        except ValueError as exc:
+            return _bad_request(str(exc))
+        return jsonify({"success": True, "data": result})
+
+    # ------------------------------------------------------------------- git
+
+    @app.route("/api/git/status", methods=["GET"])
+    def api_git_status():
+        try:
+            return jsonify({"success": True, "data": git_status()})
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/git/diff", methods=["POST"])
+    def api_git_diff():
+        payload = request.get_json(force=True) or {}
+        try:
+            result = git_diff(
+                staged=bool(payload.get("staged", False)),
+                path=payload.get("path"),
+            )
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+        return jsonify({"success": True, "data": result})
+
+    @app.route("/api/git/log", methods=["GET"])
+    def api_git_log():
+        try:
+            max_count = int(request.args.get("maxCount", 20))
+            oneline = request.args.get("oneline", "true").lower() == "true"
+            return jsonify({"success": True, "data": git_log(max_count, oneline)})
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/git/branches", methods=["GET"])
+    def api_git_branches():
+        try:
+            return jsonify({"success": True, "data": git_branches()})
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/git/add", methods=["POST"])
+    def api_git_add():
+        payload = request.get_json(force=True) or {}
+        try:
+            return jsonify({"success": True, "data": git_add(payload.get("paths"))})
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/git/commit", methods=["POST"])
+    def api_git_commit():
+        payload = request.get_json(force=True) or {}
+        message = payload.get("message", "").strip()
+        if not message:
+            return _bad_request("'message' is required")
+        try:
+            return jsonify({"success": True, "data": git_commit(message)})
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/git/branch", methods=["POST"])
+    def api_git_create_branch():
+        payload = request.get_json(force=True) or {}
+        name = payload.get("name", "").strip()
+        if not name:
+            return _bad_request("'name' is required")
+        try:
+            return jsonify({"success": True, "data": git_create_branch(
+                name, checkout=bool(payload.get("checkout", True)),
+            )})
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/git/checkout", methods=["POST"])
+    def api_git_checkout():
+        payload = request.get_json(force=True) or {}
+        ref = payload.get("ref", "").strip()
+        if not ref:
+            return _bad_request("'ref' is required")
+        try:
+            return jsonify({"success": True, "data": git_checkout(ref)})
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/git/stash", methods=["POST"])
+    def api_git_stash():
+        payload = request.get_json(force=True) or {}
+        try:
+            return jsonify({"success": True, "data": git_stash(payload.get("message", ""))})
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/git/stash/pop", methods=["POST"])
+    def api_git_stash_pop():
+        try:
+            return jsonify({"success": True, "data": git_stash_pop()})
+        except GitNotAvailableError as exc:
+            return _bad_request(str(exc))
+
+    # --------------------------------------------------------- code analysis
+
+    @app.route("/api/analysis/symbols", methods=["POST"])
+    def api_symbols():
+        payload = request.get_json(force=True) or {}
+        path = payload.get("path", "").strip()
+        if not path:
+            return _bad_request("'path' is required")
+        try:
+            return jsonify({"success": True, "data": extract_symbols(path)})
+        except ValueError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/analysis/complexity", methods=["POST"])
+    def api_complexity():
+        payload = request.get_json(force=True) or {}
+        path = payload.get("path", "").strip()
+        if not path:
+            return _bad_request("'path' is required")
+        try:
+            return jsonify({"success": True, "data": analyze_complexity(path)})
+        except ValueError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/analysis/smells", methods=["POST"])
+    def api_smells():
+        payload = request.get_json(force=True) or {}
+        path = payload.get("path", "").strip()
+        if not path:
+            return _bad_request("'path' is required")
+        try:
+            return jsonify({"success": True, "data": detect_code_smells(path)})
+        except ValueError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/analysis/references", methods=["POST"])
+    def api_references():
+        payload = request.get_json(force=True) or {}
+        symbol = payload.get("symbol", "").strip()
+        if not symbol:
+            return _bad_request("'symbol' is required")
+        return jsonify({"success": True, "data": find_symbol_references(
+            symbol, include_globs=payload.get("includeGlobs"),
+        )})
+
+    # ------------------------------------------------------ dependency graph
+
+    @app.route("/api/analysis/dependencies", methods=["POST"])
+    def api_dependencies():
+        payload = request.get_json(force=True) or {}
+        try:
+            return jsonify({"success": True, "data": analyze_dependencies(
+                path=payload.get("path"),
+            )})
+        except ValueError as exc:
+            return _bad_request(str(exc))
+
+    @app.route("/api/analysis/structure", methods=["GET"])
+    def api_structure():
+        return jsonify({"success": True, "data": get_project_structure()})
 
     # --------------------------------------------------------- error handlers
 

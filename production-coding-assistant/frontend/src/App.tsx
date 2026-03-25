@@ -66,16 +66,16 @@ export default function App() {
   }, [replaceMessages, setCurrentBranch, setFiles, setSessionId, setSettings, setStatusText]);
 
   return (
-    <div className="ide-layout">
+    <div className="flex h-screen flex-col overflow-hidden bg-zinc-950 text-zinc-100 font-sans selection:bg-blue-500/30">
       {/* Title / menu bar */}
       <TopBar />
 
       {/* Main body */}
-      <div className="ide-body">
+      <div className="flex flex-1 overflow-hidden relative">
         <ActivityBar />
         <Sidebar />
 
-        <div className="ide-main">
+        <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-[#09090b] shadow-inner relative z-0">
           <EditorPanel />
           <TerminalPanel />
         </div>
@@ -84,34 +84,34 @@ export default function App() {
       </div>
 
       {/* Status bar */}
-      <div className="statusbar">
-        <div className="statusbar-item" title="Branch">
-          <GitBranch size={12} />
+      <div className="flex items-center h-6 shrink-0 bg-zinc-900 border-t border-zinc-800 px-3 text-[11px] text-zinc-400 gap-3 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.2)]">
+        <div className="flex items-center gap-1.5 hover:text-zinc-200 cursor-pointer transition-colors px-1 h-full">
+          <GitBranch size={11} className="text-teal-500" />
           <span>{currentBranch || "workspace"}</span>
         </div>
 
         {activeTab && (
           <>
-            <div className="statusbar-item">
+            <div className="flex items-center hover:text-zinc-200 cursor-pointer transition-colors px-1 h-full">
               <span>{activeTab.language || "plaintext"}</span>
             </div>
-            <div className="statusbar-item">
-              <span>{activeTab.isDirty ? "●" : <CheckCircle2 size={10} />}</span>
+            <div className="flex items-center gap-1.5 hover:text-zinc-200 cursor-pointer transition-colors px-1 h-full">
+              {activeTab.isDirty ? <span className="w-2 h-2 rounded-full bg-zinc-300" /> : <CheckCircle2 size={10} className="text-teal-500" />}
               <span>{activeTab.name}</span>
             </div>
           </>
         )}
 
-        <div className="statusbar-sep" />
+        <div className="flex-1" />
 
-        <div className="statusbar-item" style={{ fontSize: 11, opacity: 0.8 }}>
+        <div className="flex items-center text-[10px] text-zinc-500 max-w-[40vw] truncate">
           {statusText}
         </div>
 
-        <div className="statusbar-item">
+        <div className="flex items-center gap-1.5 hover:text-zinc-200 cursor-pointer transition-colors px-1 h-full">
           {settings
-            ? <><Wifi size={11} /><span>{settings.defaultProvider}</span></>
-            : <><WifiOff size={11} /><span>connecting…</span></>
+            ? <><Wifi size={10} className="text-blue-400" /><span>{settings.defaultProvider}</span></>
+            : <><WifiOff size={10} className="text-zinc-600" /><span>connecting…</span></>
           }
         </div>
       </div>

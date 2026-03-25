@@ -14,31 +14,27 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = APP_DIR / "state.db"
 
-# Enable WAL mode for better concurrent read performance.
-_WAL_ENABLED = False
-
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _get_connection() -> sqlite3.Connection:
-    """Open a database connection with recommended pragmas applied."""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")   # safer concurrent writes
-    conn.execute("PRAGMA foreign_keys=ON")    # enforce FK constraints
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
 def init_db() -> None:
-    """Create all tables if they do not already exist."""
+    """Create all tables if they do not already exist, and migrate old schemas."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
         conn.executescript(
             """
             PRAGMA journal_mode=WAL;
-            PRAGMA foreign_keys=ON;
+            PRAGMA foreign_keys=OFF;
 
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
@@ -54,7 +50,7 @@ def init_db() -> None:
                 content TEXT NOT NULL,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
-                FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                FOREIGN KEY(session_id) REFERENCES sessions(id)
             );
 
             CREATE TABLE IF NOT EXISTS pending_diffs (
@@ -78,6 +74,8 @@ def init_db() -> None:
                 ON session_messages(session_id);
             CREATE INDEX IF NOT EXISTS idx_checkpoints_path
                 ON checkpoints(path);
+
+            PRAGMA foreign_keys=ON;
             """
         )
     logger.info("Database initialised at %s", DB_PATH)
@@ -85,7 +83,7 @@ def init_db() -> None:
 
 @contextmanager
 def db_cursor() -> Iterator[sqlite3.Cursor]:
-    """Context manager that yields a cursor and commits on success, rolls back on error."""
+    """Yield a cursor, commit on success, rollback on error."""
     init_db()
     conn = _get_connection()
     try:
@@ -99,7 +97,7 @@ def db_cursor() -> Iterator[sqlite3.Cursor]:
         conn.close()
 
 
-# ------------------------------------------------------------------ sessions
+# ── sessions ────────────────────────────────────────────────────────
 
 def create_session(title: str | None = None) -> dict[str, Any]:
     session_id = str(uuid.uuid4())
@@ -120,27 +118,29 @@ def list_sessions() -> list[dict[str, Any]]:
             "SELECT id, title, created_at, updated_at FROM sessions ORDER BY updated_at DESC"
         ).fetchall()
     return [
-        {
-            "id": row["id"],
-            "title": row["title"],
-            "createdAt": row["created_at"],
-            "updatedAt": row["updated_at"],
-        }
-        for row in rows
+        {"id": r["id"], "title": r["title"],
+         "createdAt": r["created_at"], "updatedAt": r["updated_at"]}
+        for r in rows
     ]
 
 
 def delete_session(session_id: str) -> bool:
+    """Delete a session and all its messages manually (no CASCADE dependency)."""
     with db_cursor() as cursor:
-        # session_messages cascade-deletes via FK ON DELETE CASCADE
-        result = cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        # Always delete child rows first — works regardless of FK schema version
+        cursor.execute(
+            "DELETE FROM session_messages WHERE session_id = ?", (session_id,)
+        )
+        result = cursor.execute(
+            "DELETE FROM sessions WHERE id = ?", (session_id,)
+        )
     deleted = result.rowcount > 0
     if deleted:
         logger.info("Deleted session %s", session_id)
     return deleted
 
 
-# --------------------------------------------------------------- messages
+# ── messages ────────────────────────────────────────────────────────
 
 def append_message(
     session_id: str,
@@ -161,17 +161,11 @@ def append_message(
             (message_id, session_id, role, content, json.dumps(payload), now),
         )
         cursor.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
-            (now, session_id),
+            "UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id)
         )
     logger.debug("Appended %s message to session %s", role, session_id)
-    return {
-        "id": message_id,
-        "role": role,
-        "content": content,
-        "metadata": payload,
-        "createdAt": now,
-    }
+    return {"id": message_id, "role": role, "content": content,
+            "metadata": payload, "createdAt": now}
 
 
 def get_messages(session_id: str) -> list[dict[str, Any]]:
@@ -186,18 +180,13 @@ def get_messages(session_id: str) -> list[dict[str, Any]]:
             (session_id,),
         ).fetchall()
     return [
-        {
-            "id": row["id"],
-            "role": row["role"],
-            "content": row["content"],
-            "metadata": json.loads(row["metadata_json"]),
-            "createdAt": row["created_at"],
-        }
-        for row in rows
+        {"id": r["id"], "role": r["role"], "content": r["content"],
+         "metadata": json.loads(r["metadata_json"]), "createdAt": r["created_at"]}
+        for r in rows
     ]
 
 
-# ------------------------------------------------------------------ diffs
+# ── diffs ────────────────────────────────────────────────────────────
 
 def store_pending_diff(
     path: str,
@@ -217,14 +206,8 @@ def store_pending_diff(
             (diff_id, path, original_content, modified_content, json.dumps(validation), now),
         )
     logger.debug("Stored pending diff %s for %s", diff_id, path)
-    return {
-        "id": diff_id,
-        "path": path,
-        "originalContent": original_content,
-        "modifiedContent": modified_content,
-        "validation": validation,
-        "createdAt": now,
-    }
+    return {"id": diff_id, "path": path, "originalContent": original_content,
+            "modifiedContent": modified_content, "validation": validation, "createdAt": now}
 
 
 def get_pending_diff(diff_id: str) -> dict[str, Any] | None:
@@ -238,14 +221,11 @@ def get_pending_diff(diff_id: str) -> dict[str, Any] | None:
         ).fetchone()
     if row is None:
         return None
-    return {
-        "id": row["id"],
-        "path": row["path"],
-        "originalContent": row["original_content"],
-        "modifiedContent": row["modified_content"],
-        "validation": json.loads(row["validation_json"]),
-        "createdAt": row["created_at"],
-    }
+    return {"id": row["id"], "path": row["path"],
+            "originalContent": row["original_content"],
+            "modifiedContent": row["modified_content"],
+            "validation": json.loads(row["validation_json"]),
+            "createdAt": row["created_at"]}
 
 
 def delete_pending_diff(diff_id: str) -> None:
@@ -254,7 +234,7 @@ def delete_pending_diff(diff_id: str) -> None:
     logger.debug("Deleted pending diff %s", diff_id)
 
 
-# --------------------------------------------------------------- checkpoints
+# ── checkpoints ──────────────────────────────────────────────────────
 
 def store_checkpoint(path: str, snapshot_path: str, summary: str) -> dict[str, Any]:
     checkpoint_id = str(uuid.uuid4())
@@ -268,13 +248,8 @@ def store_checkpoint(path: str, snapshot_path: str, summary: str) -> dict[str, A
             (checkpoint_id, path, snapshot_path, summary, now),
         )
     logger.info("Stored checkpoint %s for %s", checkpoint_id, path)
-    return {
-        "id": checkpoint_id,
-        "path": path,
-        "snapshotPath": snapshot_path,
-        "summary": summary,
-        "createdAt": now,
-    }
+    return {"id": checkpoint_id, "path": path, "snapshotPath": snapshot_path,
+            "summary": summary, "createdAt": now}
 
 
 def get_checkpoint(checkpoint_id: str) -> dict[str, Any] | None:
@@ -285,10 +260,5 @@ def get_checkpoint(checkpoint_id: str) -> dict[str, Any] | None:
         ).fetchone()
     if row is None:
         return None
-    return {
-        "id": row["id"],
-        "path": row["path"],
-        "snapshotPath": row["snapshot_path"],
-        "summary": row["summary"],
-        "createdAt": row["created_at"],
-    }
+    return {"id": row["id"], "path": row["path"], "snapshotPath": row["snapshot_path"],
+            "summary": row["summary"], "createdAt": row["created_at"]}

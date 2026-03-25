@@ -1,0 +1,6 @@
+{
+  "python.analysis.extraPaths": [
+    "./production-coding-assistant/backend"
+  ],
+  "css.lint.unknownAtRules": "ignore"
+}

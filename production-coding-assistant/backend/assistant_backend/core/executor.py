@@ -33,9 +33,9 @@ def should_execute(message: str) -> bool:
     return any(token in message.lower() for token in CODE_REQUEST_TOKENS)
 
 
-def infer_target_path(message: str, context: dict[str, Any]) -> str | None:
-    """Try to extract a target file path from the message or context."""
-    # Longer extensions first — tsx before ts, jsx before js
+def infer_target_path(message: str, provider_message: str, context: dict[str, Any]) -> str | None:
+    """Try to extract a target file path from the message, provider response, or context."""
+    # 1. Look in user's prompt
     explicit = re.search(
         r"([a-zA-Z0-9_\-./]+?\.(?:py|tsx|jsx|ts|js|json|md|html|css))",
         message,
@@ -43,8 +43,17 @@ def infer_target_path(message: str, context: dict[str, Any]) -> str | None:
     if explicit:
         return explicit.group(1).lstrip("./")
 
+    # 2. Look in the AI's response for a filename comment or title
+    explicit_provider = re.search(
+        r"([a-zA-Z0-9_\-./]+?\.(?:py|tsx|jsx|ts|js|json|md|html|css))",
+        provider_message,
+    )
+    if explicit_provider:
+        return explicit_provider.group(1).lstrip("./")
+
+    # 3. Fallback to active file if modifying
     active_file = str(context.get("activeFilePath") or "").strip()
-    if active_file and any(t in message.lower() for t in ("edit", "update", "fix")):
+    if active_file:
         return active_file
 
     return None
@@ -95,7 +104,7 @@ def build_execution_preview(
     if not should_execute(message):
         return None
 
-    target_path = infer_target_path(message, context)
+    target_path = infer_target_path(message, provider_message, context)
     if not target_path:
         logger.debug("Could not infer target path — skipping execution preview")
         return None

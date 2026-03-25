@@ -10,7 +10,7 @@
   "scripts": {
     "dev:frontend": "npm --prefix frontend run dev",
     "build:frontend": "npm --prefix frontend run build",
-    "start:backend": "..\\.venv\\Scripts\\python.exe backend\\server.py",
+    "start:backend": "powershell -ExecutionPolicy Bypass -File scripts\\run_backend.ps1",
     "electron:dev": "electron-forge start",
     "electron:package": "electron-forge package",
     "electron:make": "electron-forge make"

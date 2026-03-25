@@ -6,11 +6,11 @@ import { terminalAPI } from "../../utils/api";
 type PanelTab = "terminal" | "logs" | "errors";
 
 function lineClass(line: string): string {
-  if (line.startsWith("$")) return "terminal-output-line cmd";
-  if (line.startsWith("[stderr]") || line.startsWith("[error]")) return "terminal-output-line err";
-  if (line.startsWith("[approval]")) return "terminal-output-line warn";
-  if (line.startsWith("[exit")) return "terminal-output-line dim";
-  return "terminal-output-line";
+  if (line.startsWith("$")) return "text-teal-400 font-medium drop-shadow-sm";
+  if (line.startsWith("[stderr]") || line.startsWith("[error]")) return "text-red-400";
+  if (line.startsWith("[approval]")) return "text-amber-400 font-medium";
+  if (line.startsWith("[exit")) return "text-zinc-500 italic";
+  return "text-zinc-300";
 }
 
 export default function TerminalPanel() {
@@ -58,69 +58,86 @@ export default function TerminalPanel() {
   };
 
   return (
-    <div className="terminal-panel">
+    <div className="flex flex-col h-[260px] shrink-0 bg-[#0f0f11] border-t border-[#27272a] shadow-[0_-4px_12px_rgba(0,0,0,0.4)] z-10 relative">
       {/* Panel tabs bar */}
-      <div className="panel-tabs">
+      <div className="flex items-center h-8 bg-[#18181b] border-b border-[#27272a] px-2 shrink-0 select-none">
         {(["terminal", "logs", "errors"] as PanelTab[]).map((t) => (
           <button
             key={t}
-            className={`panel-tab${activeTab === t ? " active" : ""}`}
+            className={`h-8 px-4 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
+              activeTab === t 
+                ? "text-zinc-100 border-blue-500 bg-[#0f0f11]" 
+                : "text-zinc-400 border-transparent hover:text-zinc-200 bg-transparent"
+            }`}
             onClick={() => setActiveTab(t)}
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
-        <div className="panel-tab-spacer" />
-        <button className="panel-action-btn" title="Clear" onClick={clearTerminal}>
-          <Trash2 size={13} />
-        </button>
-        <button className="panel-action-btn" title="Maximise">
-          <Maximize2 size={13} />
-        </button>
+        <div className="flex-1" />
+        <div className="flex items-center gap-1.5 px-2">
+          <button 
+            className="w-6 h-6 flex items-center justify-center rounded text-zinc-400 bg-transparent hover:bg-zinc-800 hover:text-red-400 transition-colors cursor-pointer" 
+            title="Clear" 
+            onClick={clearTerminal}
+          >
+            <Trash2 size={13} strokeWidth={2} />
+          </button>
+          <button 
+            className="w-6 h-6 flex items-center justify-center rounded text-zinc-400 bg-transparent hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer" 
+            title="Maximise"
+          >
+            <Maximize2 size={13} strokeWidth={2} />
+          </button>
+        </div>
       </div>
 
       {/* Output */}
-      <div className="terminal-output">
+      <div className="flex-1 overflow-y-auto px-4 py-2 font-mono text-[11px] leading-relaxed bg-[#0b0b0c] custom-scrollbar shadow-inner select-text">
         {terminal.output.length === 0 ? (
-          <span className="terminal-output-line dim">
-            {activeTab === "terminal" && "Guarded shell access is ready. Risky commands require approval."}
-            {activeTab === "logs"     && "No logs yet."}
-            {activeTab === "errors"   && "No errors."}
-          </span>
+          <div className="text-zinc-600 italic">
+            {activeTab === "terminal" && "Agent shell. Background commands execute safely with required supervision."}
+            {activeTab === "logs"     && "No logs stream active."}
+            {activeTab === "errors"   && "No system errors."}
+          </div>
         ) : (
           terminal.output.map((line, i) => (
-            <div key={i} className={lineClass(line)}>{line}</div>
+            <div key={i} className={`whitespace-pre-wrap break-all ${lineClass(line)}`}>
+              {line}
+            </div>
           ))
         )}
         <div ref={outputEndRef} />
       </div>
 
       {/* Input row */}
-      <div className="terminal-input-row">
-        <span className="terminal-prompt">›</span>
+      <div className="flex items-center h-8 border-t border-[#27272a] px-3 gap-2 shrink-0 bg-[#121214]">
+        <span className="text-teal-400 font-mono text-sm shrink-0 font-bold ml-1">›</span>
         <input
-          className="terminal-input"
+          className="flex-1 h-full bg-transparent border-none outline-none font-mono text-xs text-zinc-200 placeholder-zinc-600 disabled:opacity-50"
           type="text"
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") void runCommand(); }}
-          placeholder="Enter command…"
+          placeholder="Issue root shell command..."
           disabled={terminal.isRunning}
         />
         {terminal.approvalRequired && (
-          <button className="btn-danger" style={{ height: 22, padding: "0 8px", fontSize: 11, gap: 4 }} onClick={() => void runCommand(true)}>
-            <ShieldAlert size={12} />
+          <button 
+            className="flex items-center gap-1.5 h-6 px-2.5 text-[10px] uppercase font-bold tracking-wide rounded border border-red-900/50 bg-red-950/40 text-red-400 hover:bg-red-900/60 transition-colors cursor-pointer" 
+            onClick={() => void runCommand(true)}
+          >
+            <ShieldAlert size={12} strokeWidth={2.5} />
             Approve
           </button>
         )}
         <button
-          className="btn-primary"
-          style={{ height: 22, width: 28, padding: 0, justifyContent: "center" }}
+          className="flex items-center justify-center w-7 h-6 rounded bg-blue-600 text-white disabled:bg-zinc-800 disabled:text-zinc-600 hover:animate-pulse transition-colors cursor-pointer disabled:cursor-not-allowed"
           onClick={() => void runCommand()}
           disabled={terminal.isRunning || !command.trim()}
           title="Run"
         >
-          <Play size={12} />
+          <Play size={12} className={terminal.isRunning ? "" : "ml-0.5"} />
         </button>
       </div>
     </div>
