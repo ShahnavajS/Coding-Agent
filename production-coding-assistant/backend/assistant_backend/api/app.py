@@ -21,10 +21,12 @@ from assistant_backend.tools.filesystem_tool import (
     delete_path,
     list_files_flat,
     read_text_file,
+    write_text_file,
 )
 from assistant_backend.tools.shell_tool import execute_command
 from assistant_backend.tools.ast_editor import structured_update
 from assistant_backend.tools.structured_editor import apply_pending_diff, preview_file_update
+from assistant_backend.validation.parser_checks import validate_content
 from assistant_backend.tools.grep_tool import grep_workspace, find_and_replace
 from assistant_backend.tools.git_tool import (
     git_status, git_diff, git_log, git_current_branch, git_branches,
@@ -111,6 +113,31 @@ def create_app() -> Flask:
         except ValueError as exc:
             return _bad_request(str(exc))
         return jsonify({"success": True, "data": result})
+
+    @app.route("/api/files/write", methods=["POST"])
+    def files_write():
+        payload = request.get_json(force=True) or {}
+        path = payload.get("path", "").strip()
+        content = payload.get("content", "")
+        if not path:
+            return _bad_request("'path' is required")
+        validation = validate_content(path, content).to_dict()
+        if not validation["ok"]:
+            return jsonify({"success": False, "error": "; ".join(validation["messages"])}), 400
+        try:
+            result = write_text_file(path, content)
+        except ValueError as exc:
+            return _bad_request(str(exc))
+        return jsonify(
+            {
+                "success": True,
+                "data": {
+                    "path": result["path"],
+                    "size": result["size"],
+                    "validation": validation,
+                },
+            }
+        )
 
     # ------------------------------------------------------------------ diffs
 

@@ -34,7 +34,6 @@ export interface AgentResponse {
     model?: string;
     error?: string;
   };
-  diffPreview?: DiffPreview;
 }
 
 export interface TerminalOutput {
@@ -111,6 +110,28 @@ export const fileAPI = {
     );
     if (!data.data) {
       throw new Error("No create result returned");
+    }
+    return data.data;
+  },
+
+  writeFile: async (
+    path: string,
+    content: string
+  ): Promise<{
+    path: string;
+    size: number;
+    validation: DiffPreview["validation"];
+  }> => {
+    const data = await request<{
+      path: string;
+      size: number;
+      validation: DiffPreview["validation"];
+    }>("/files/write", {
+      method: "POST",
+      body: JSON.stringify({ path, content }),
+    });
+    if (!data.data) {
+      throw new Error("No write result returned");
     }
     return data.data;
   },

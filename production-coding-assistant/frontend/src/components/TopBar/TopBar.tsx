@@ -1,4 +1,5 @@
-import { GitBranch, Save, Settings2, Bell } from "lucide-react";
+import type { CSSProperties } from "react";
+import { Bell, GitBranch, Save, Settings2 } from "lucide-react";
 import { useAppStore } from "../../store/useAppStore";
 import { fileAPI } from "../../utils/api";
 
@@ -7,97 +8,85 @@ export default function TopBar() {
     toggleSettings,
     tabs,
     activeFileId,
-    updateTab,
-    setDiffViewer,
     setStatusText,
     statusText,
     currentBranch,
     settings,
   } = useAppStore();
 
-  const activeTab = tabs.find((t) => t.id === activeFileId);
+  const activeTab = tabs.find((tab) => tab.id === activeFileId);
 
   const handleSave = async () => {
-    if (!activeTab) { setStatusText("No file selected"); return; }
+    if (!activeTab) {
+      setStatusText("No file selected");
+      return;
+    }
+
     try {
-      const preview = await fileAPI.previewWrite(activeTab.path, activeTab.content);
-      setDiffViewer({
-        isOpen: true,
-        diffId: preview.id,
-        fileName: preview.path,
-        originalContent: preview.originalContent,
-        modifiedContent: preview.modifiedContent,
-        validation: preview.validation,
-        onAccept: async () => {
-          const result = await fileAPI.applyDiff(preview.id);
-          updateTab(activeTab.id, { isDirty: false });
-          setStatusText(`Saved · checkpoint ${result.checkpoint.id.slice(0, 8)}`);
-        },
-        onReject: () => setStatusText(`Save cancelled for ${preview.path}`),
-      });
-      setStatusText(`Preview ready · ${preview.path}`);
-    } catch (err) {
-      setStatusText(`Save failed: ${err instanceof Error ? err.message : "Unknown"}`);
+      await fileAPI.writeFile(activeTab.path, activeTab.content);
+      useAppStore.getState().updateTab(activeTab.id, { isDirty: false });
+      setStatusText(`Saved ${activeTab.path}`);
+    } catch (error) {
+      setStatusText(
+        `Save failed: ${error instanceof Error ? error.message : "Unknown"}`
+      );
     }
   };
 
   return (
-    <div 
-      className="flex items-center h-10 shrink-0 bg-[#18181b]/90 backdrop-blur-md border-b border-zinc-800/80 px-4 gap-4 select-none"
-      style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+    <div
+      className="flex h-10 shrink-0 items-center gap-4 border-b border-zinc-800/80 bg-[#18181b]/90 px-4 backdrop-blur-md"
+      style={{ WebkitAppRegion: "drag" } as CSSProperties}
     >
-      {/* Left: app name + provider badge */}
-      <div 
-        className="flex items-center gap-3 shrink-0" 
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      <div
+        className="flex shrink-0 items-center gap-3"
+        style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
       >
-        <span className="font-mono text-[13px] font-semibold text-zinc-200 tracking-wide drop-shadow-sm">
+        <span className="font-mono text-[13px] font-semibold tracking-wide text-zinc-200">
           Production AI Assistant
         </span>
-        <span className="px-2 py-0.5 text-[10px] uppercase tracking-wider font-bold rounded-full border border-zinc-700 bg-zinc-800/60 text-teal-400">
+        <span className="rounded-full border border-zinc-700 bg-zinc-800/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-teal-400">
           {settings?.defaultProvider || "groq"}
         </span>
       </div>
 
-      {/* Centre: status text */}
-      <div 
-        className="flex-1 text-center text-xs text-zinc-500 font-medium truncate px-6 uppercase tracking-widest drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]"
-        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+      <div
+        className="flex-1 truncate px-6 text-center text-xs font-medium uppercase tracking-widest text-zinc-500"
+        style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
         {statusText}
       </div>
 
-      {/* Right: actions */}
-      <div 
-        className="flex items-center gap-1 shrink-0" 
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      <div
+        className="flex shrink-0 items-center gap-1"
+        style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
       >
         <button
           onClick={() => void handleSave()}
           className="btn-secondary h-6 px-2.5 text-[11px] font-medium tracking-wide shadow-black hover:border-zinc-500 hover:text-white"
-          title="Preview & save"
+          title="Save file"
         >
           <Save size={13} className="text-zinc-400" />
           Save
         </button>
 
-        <div className="w-px h-4 bg-zinc-700 mx-2" />
+        <div className="mx-2 h-4 w-px bg-zinc-700" />
 
-        <div className="flex items-center gap-1.5 px-2 py-1 mx-1 text-[11px] font-medium text-zinc-400 rounded-md cursor-pointer transition-all hover:bg-zinc-800 hover:text-zinc-200">
+        <div className="mx-1 flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-zinc-400 transition-all hover:bg-zinc-800 hover:text-zinc-200">
           <GitBranch size={13} className="text-teal-500/80" />
           <span>{currentBranch || "workspace"}</span>
         </div>
 
         <button
           onClick={toggleSettings}
-          className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer ml-1"
+          className="ml-1 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
           title="Settings"
         >
           <Settings2 size={15} />
         </button>
 
-        <button 
-          className="p-1.5 rounded-md text-zinc-400 hover:text-blue-400 hover:bg-blue-900/20 transition-colors cursor-pointer" 
+        <button
+          className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-blue-900/20 hover:text-blue-400"
           title="Notifications"
         >
           <Bell size={15} />

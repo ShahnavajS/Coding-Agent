@@ -2,141 +2,190 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
-from assistant_backend.tools.structured_editor import preview_file_update
+from assistant_backend.core.checkpoints import create_file_checkpoint
+from assistant_backend.core.models import Plan
+from assistant_backend.tools.filesystem_tool import write_text_file
+from assistant_backend.validation.parser_checks import validate_content
+from assistant_backend.validation.project_checks import validate_project_files
 
 logger = logging.getLogger(__name__)
 
 CODE_REQUEST_TOKENS = (
-    "make", "create", "build", "write", "implement",
-    "generate", "add", "fix", "update",
+    "make",
+    "create",
+    "build",
+    "write",
+    "implement",
+    "generate",
+    "add",
+    "fix",
+    "update",
 )
-
-TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
-
-# Patterns that indicate the provider returned a skeleton instead of real code.
-SKELETON_PATTERNS = (
-    r"#\s*implementation",
-    r"#\s*TODO",
-    r"#\s*your code here",
-    r"#\s*add your",
-    r"pass\s*$",
-    r"\.\.\.\s*$",
-    r"raise\s+NotImplementedError",
-)
+FILE_HEADER_RE = re.compile(r"^FILE:\s+(.+?)\s*$")
 
 
 def should_execute(message: str) -> bool:
-    """Return True if the message looks like a code generation request."""
     return any(token in message.lower() for token in CODE_REQUEST_TOKENS)
 
 
-def infer_target_path(message: str, provider_message: str, context: dict[str, Any]) -> str | None:
-    """Try to extract a target file path from the message, provider response, or context."""
-    # 1. Look in user's prompt
-    explicit = re.search(
-        r"([a-zA-Z0-9_\-./]+?\.(?:py|tsx|jsx|ts|js|json|md|html|css))",
-        message,
-    )
-    if explicit:
-        return explicit.group(1).lstrip("./")
-
-    # 2. Look in the AI's response for a filename comment or title
-    explicit_provider = re.search(
-        r"([a-zA-Z0-9_\-./]+?\.(?:py|tsx|jsx|ts|js|json|md|html|css))",
-        provider_message,
-    )
-    if explicit_provider:
-        return explicit_provider.group(1).lstrip("./")
-
-    # 3. Fallback to active file if modifying
-    active_file = str(context.get("activeFilePath") or "").strip()
-    if active_file:
-        return active_file
-
-    return None
+def _normalize_relative_path(path: str) -> str:
+    normalized: str = path.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized.removeprefix("./")
+    if normalized.startswith("project/"):
+        normalized = normalized.removeprefix("project/")
+    if not normalized:
+        raise ValueError("FILE path cannot be empty.")
+    if normalized.startswith("/") or ".." in normalized.split("/"):
+        raise ValueError(f"Invalid FILE path: {path}")
+    return normalized
 
 
-def extract_code_block(text: str) -> str | None:
-    """Extract the LAST fenced code block from a provider response.
+def parse_file_blocks(raw_output: str) -> tuple[list[dict[str, str]], list[str]]:
+    files_by_path: dict[str, str] = {}
+    errors: list[str] = []
+    current_path: str | None = None
+    current_lines: list[str] = []
+    saw_file_header = False
+    duplicate_paths: set[str] = set()
 
-    We use the last block because providers often show an outline first and
-    then the complete implementation at the end.
-    """
-    matches = list(re.finditer(r"```(?:[\w+-]+)?\n(.*?)```", text, re.DOTALL))
-    if not matches:
-        return None
+    def finalize_block(path: str | None, lines: list[str]) -> None:
+        if path is None:
+            return
+        content = "\n".join(lines).strip("\n")
+        if not content.strip():
+            errors.append(f"{path}: content is empty")
+            return
+        if path in files_by_path:
+            duplicate_paths.add(path)
+        files_by_path[path] = content + "\n"
 
-    # Prefer the longest block — most likely to be the complete implementation.
-    best = max(matches, key=lambda m: len(m.group(1)))
-    code = best.group(1).strip() + "\n"
-    return code if len(code.strip()) > 20 else None
+    for line in raw_output.splitlines():
+        header = FILE_HEADER_RE.match(line)
+        if header:
+            saw_file_header = True
+            finalize_block(current_path, current_lines)
+            try:
+                current_path = _normalize_relative_path(header.group(1))
+            except ValueError as exc:
+                errors.append(str(exc))
+                current_path = None
+            current_lines = []
+            continue
+
+        if current_path is None:
+            continue
+
+        current_lines.append(line)
+
+    finalize_block(current_path, current_lines)
+
+    if duplicate_paths:
+        logger.warning(
+            "Duplicate FILE blocks detected for %s; keeping the last valid block for each path.",
+            ", ".join(sorted(duplicate_paths)),
+        )
+
+    files = [
+        {"path": path, "content": content}
+        for path, content in files_by_path.items()
+    ]
+    for item in files:
+        if "```" in item["content"]:
+            errors.append(f"{item['path']}: remove markdown fences and return raw file content only")
+
+    if not saw_file_header:
+        errors.append("No FILE blocks were found in the model output.")
+
+    return files, errors
 
 
-def is_skeleton(code: str) -> bool:
-    """Return True if the code looks like a placeholder/skeleton rather than real code."""
-    for pattern in SKELETON_PATTERNS:
-        if re.search(pattern, code, re.IGNORECASE | re.MULTILINE):
-            return True
-    # Also flag if the code is very short (< 5 meaningful lines)
-    meaningful = [l for l in code.splitlines() if l.strip() and not l.strip().startswith("#")]
-    return len(meaningful) < 4
+def extract_structure_block(raw_output: str) -> str:
+    lines: list[str] = []
+    for line in raw_output.splitlines():
+        if FILE_HEADER_RE.match(line):
+            break
+        if line.strip():
+            lines.append(line.rstrip())
+    return "\n".join(lines).strip()
 
 
-def load_template(target_path: str) -> str | None:
-    """Load a built-in template for the given target file, if one exists."""
-    stem = Path(target_path).name
-    template_path = TEMPLATES_DIR / f"{stem}.template"
-    if template_path.exists():
-        logger.debug("Loading template: %s", template_path)
-        return template_path.read_text(encoding="utf-8")
-    return None
+def validate_generation_output(
+    raw_output: str,
+    plan: Plan,
+    required_files: list[str] | None = None,
+    require_structure: bool = True,
+    known_files: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    files, errors = parse_file_blocks(raw_output)
+    validations: list[dict[str, Any]] = []
+    structure_block = extract_structure_block(raw_output)
+    valid_files: list[dict[str, str]] = []
+    target_files = required_files or plan.expected_files
+
+    if not plan.project_structure.strip():
+        errors.append("Planner did not produce a project structure.")
+    if require_structure and not structure_block:
+        errors.append("Model output is missing the project structure block before the FILE sections.")
+
+    expected_count = len(target_files) or plan.expected_file_count or 2
+    if len(files) < expected_count:
+        errors.append(
+            f"Expected at least {expected_count} files, but received {len(files)}."
+        )
+
+    if target_files:
+        actual_paths: set[str] = {item["path"] for item in files}
+        missing: list[str] = [path for path in target_files if path not in actual_paths]
+        if missing:
+            errors.append("Missing planned files: " + ", ".join(missing))
+
+    for item in files:
+        validation = validate_content(item["path"], item["content"]).to_dict()
+        validations.append({"path": item["path"], "validation": validation})
+        if not validation["ok"]:
+            errors.extend(
+                f"{item['path']}: {message}" for message in validation["messages"]
+            )
+        else:
+            valid_files.append(item)
+
+    invalid_paths: set[str] = set()
+    if valid_files or known_files:
+        project_context: dict[str, str] = dict(known_files or {})
+        project_context.update({item["path"]: item["content"] for item in valid_files})
+        project_issues = validate_project_files(
+            plan,
+            [{"path": path, "content": content} for path, content in project_context.items()],
+        )
+        invalid_paths = {issue["path"] for issue in project_issues}
+        if invalid_paths:
+            valid_files = [item for item in valid_files if item["path"] not in invalid_paths]
+        errors.extend(
+            f"{issue['path']}: {issue['message']}" for issue in project_issues
+        )
+
+    return {
+        "ok": not errors,
+        "files": files,
+        "validFiles": valid_files,
+        "errors": errors,
+        "validations": validations,
+        "structurePresent": bool(structure_block),
+        "invalidPaths": sorted(invalid_paths),
+    }
 
 
-def build_execution_preview(
-    message: str,
-    provider_message: str,
-    context: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Build a diff preview for a code change, or return None if not applicable."""
-    if not should_execute(message):
-        return None
+def write_generated_files(files: list[dict[str, str]], summary: str) -> dict[str, Any]:
+    written: list[str] = []
+    checkpoints: list[dict[str, str]] = []
 
-    target_path = infer_target_path(message, provider_message, context)
-    if not target_path:
-        logger.debug("Could not infer target path — skipping execution preview")
-        return None
+    for item in files:
+        checkpoints.append(create_file_checkpoint(item["path"], summary))
+        write_text_file(item["path"], item["content"])
+        written.append(item["path"])
 
-    # Extract code from provider response
-    code = extract_code_block(provider_message)
-
-    # Reject skeletons — they look syntactically valid but are useless
-    if code and is_skeleton(code):
-        logger.info("Provider returned a skeleton for %s — discarding", target_path)
-        code = None
-
-    # Fall back to a built-in template if provider code is missing or skeletal
-    content = code or load_template(target_path)
-    if not content:
-        logger.debug("No usable content for %s — skipping execution preview", target_path)
-        return None
-
-    preview = preview_file_update(target_path, content)
-    validation = preview.get("validation", {})
-
-    if not validation.get("ok"):
-        template = load_template(target_path)
-        if template and template != content:
-            logger.info("Validation failed for %s — trying template fallback", target_path)
-            preview = preview_file_update(target_path, template)
-            validation = preview.get("validation", {})
-        if not validation.get("ok"):
-            logger.warning("Execution preview validation failed for %s", target_path)
-            return None
-
-    preview["path"] = target_path
-    preview["summary"] = f"Prepared changes for {target_path}"
-    logger.info("Execution preview ready for %s", target_path)
-    return preview
+    logger.info("Wrote %d generated files", len(written))
+    return {"filesModified": written, "checkpoints": checkpoints}

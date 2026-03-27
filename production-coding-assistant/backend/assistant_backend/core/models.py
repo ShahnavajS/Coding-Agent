@@ -42,6 +42,9 @@ class Plan:
     summary: str
     risk_level: str
     files_of_interest: list[str] = field(default_factory=list)
+    expected_files: list[str] = field(default_factory=list)
+    expected_file_count: int = 0
+    project_structure: str = ""
     validation_plan: list[str]   = field(default_factory=list)
     steps: list[PlanStep]        = field(default_factory=list)
 
@@ -50,6 +53,9 @@ class Plan:
             "summary":        self.summary,
             "riskLevel":      self.risk_level,
             "filesOfInterest":self.files_of_interest,
+            "expectedFiles": self.expected_files,
+            "expectedFileCount": self.expected_file_count,
+            "projectStructure": self.project_structure,
             "validationPlan": self.validation_plan,
             "steps":          [s.to_dict() for s in self.steps],
         }

@@ -5,7 +5,6 @@ import Sidebar from "./components/Sidebar/Sidebar";
 import EditorPanel from "./components/Editor/EditorPanel";
 import ChatPanel from "./components/Chat/ChatPanel";
 import TerminalPanel from "./components/Terminal/TerminalPanel";
-import DiffViewer from "./components/DiffViewer/DiffViewer";
 import SettingsDrawer from "./components/Settings/SettingsDrawer";
 import { useAppStore } from "./store/useAppStore";
 import { buildFileTree } from "./utils/fileUtils";
@@ -116,8 +115,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Overlays */}
-      <DiffViewer />
       <SettingsDrawer />
     </div>
   );
