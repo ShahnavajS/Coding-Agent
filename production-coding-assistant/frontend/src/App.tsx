@@ -74,7 +74,7 @@ export default function App() {
         <ActivityBar />
         <Sidebar />
 
-        <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-[#09090b] shadow-inner relative z-0">
+        <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-dark-bg shadow-inner relative z-0">
           <EditorPanel />
           <TerminalPanel />
         </div>

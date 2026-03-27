@@ -35,7 +35,7 @@ export default function TopBar() {
 
   return (
     <div
-      className="flex h-10 shrink-0 items-center gap-4 border-b border-zinc-800/80 bg-[#18181b]/90 px-4 backdrop-blur-md"
+      className="flex h-10 shrink-0 items-center gap-4 border-b border-zinc-800/80 bg-dark-surface/90 px-4 backdrop-blur-md"
       style={{ WebkitAppRegion: "drag" } as CSSProperties}
     >
       <div

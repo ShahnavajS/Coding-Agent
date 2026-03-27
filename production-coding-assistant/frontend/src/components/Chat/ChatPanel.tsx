@@ -62,7 +62,7 @@ function ConfirmDialog({
   onCancel(): void;
 }) {
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-9999 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 12 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -133,7 +133,7 @@ function StepRow({
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="pb-1 pl-[22px] pt-1.5 text-[11px] leading-relaxed text-zinc-400">
+            <div className="pb-1 pl-5.5 pt-1.5 text-[11px] leading-relaxed text-zinc-400">
               <div>{step.description}</div>
               {step.details && (
                 <pre className="mt-1.5 overflow-x-auto rounded-md border border-zinc-800/60 bg-black/40 p-1.5 font-mono text-[10px] text-zinc-500">
@@ -162,8 +162,8 @@ function MsgBubble({ msg }: { msg: Message }) {
       <div
         className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded border text-[10px] font-bold ${
           isUser
-            ? "border-blue-400/30 bg-gradient-to-br from-blue-500 to-indigo-600 text-white"
-            : "border-teal-900/40 bg-gradient-to-br from-[#1c2c26] to-[#0f1a15] text-teal-500"
+            ? "border-blue-400/30 bg-linear-to-br from-blue-500 to-indigo-600 text-white"
+            : "border-teal-900/40 bg-linear-to-br from-[#1c2c26] to-[#0f1a15] text-teal-500"
         }`}
       >
         {isUser ? "U" : <Bot size={13} />}
@@ -174,10 +174,10 @@ function MsgBubble({ msg }: { msg: Message }) {
           className={`rounded-lg px-3 py-2.5 text-xs leading-[1.6] shadow-sm ${
             isUser
               ? "rounded-tr-sm border border-[#1a5580]/60 bg-[#0d3a5c]/80 text-[#b8d4f0]"
-              : "rounded-tl-sm border border-zinc-800/80 bg-[#18181b]/90 text-zinc-200"
+            : "rounded-tl-sm border border-zinc-800/80 bg-dark-surface/90 text-zinc-200"
           }`}
         >
-          <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+          <div className="whitespace-pre-wrap wrap-break-word">{msg.content}</div>
           {msg.steps && msg.steps.length > 0 && (
             <div className="mt-3 flex flex-col gap-0.5 border-t border-zinc-800/60 pt-2">
               {msg.steps.map((step) => (
@@ -217,7 +217,7 @@ function SessionRow({
       className={`group relative flex h-7 items-center gap-2 border-l-2 px-3 transition-all ${
         isActive
           ? "border-blue-500 bg-[#27272a]/40 text-zinc-100"
-          : "border-transparent text-zinc-400 hover:bg-[#18181b] hover:text-zinc-200"
+          : "border-transparent text-zinc-400 hover:bg-dark-surface hover:text-zinc-200"
       }`}
     >
       <button
@@ -450,7 +450,7 @@ export default function ChatPanel() {
         />
       )}
 
-      <div className="z-10 flex w-[340px] shrink-0 flex-col border-l border-zinc-800/80 bg-[#0f0f11] shadow-[-4px_0_16px_rgba(0,0,0,0.3)] xl:w-[380px]">
+      <div className="z-10 flex w-85 shrink-0 flex-col border-l border-zinc-800/80 bg-[#0f0f11] shadow-[-4px_0_16px_rgba(0,0,0,0.3)] xl:w-95">
         <div className="relative z-20 flex h-10 shrink-0 select-none items-center justify-between gap-2 border-b border-zinc-800/60 bg-zinc-900/60 px-4 text-[11px] font-bold uppercase tracking-widest text-zinc-500 shadow-sm backdrop-blur-sm">
           <Bot size={15} className="shrink-0 text-teal-500" strokeWidth={2.5} />
           <span className="mt-0.5 flex-1 text-zinc-300">AI Assistant</span>
@@ -463,7 +463,7 @@ export default function ChatPanel() {
           </button>
         </div>
 
-        <div className="relative z-10 max-h-[140px] shrink-0 overflow-y-auto border-b border-zinc-800/60 bg-[#0f0f11] shadow-sm">
+        <div className="relative z-10 max-h-35 shrink-0 overflow-y-auto border-b border-zinc-800/60 bg-[#0f0f11] shadow-sm">
           {sessions.map((session) => (
             <SessionRow
               key={session.id}
@@ -508,10 +508,10 @@ export default function ChatPanel() {
                 animate={{ opacity: 1, y: 0 }}
                 className="flex gap-2.5 px-1 py-1"
               >
-                <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded border border-teal-900/40 bg-gradient-to-br from-[#1c2c26] to-[#0f1a15] text-teal-500 shadow-sm">
+                <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded border border-teal-900/40 bg-linear-to-br from-[#1c2c26] to-[#0f1a15] text-teal-500 shadow-sm">
                   <Bot size={13} />
                 </div>
-                <div className="mt-0.5 flex h-8 items-center gap-1.5 rounded-lg rounded-tl-sm border border-zinc-800/80 bg-[#18181b]/90 px-3 py-2 shadow-sm">
+                <div className="mt-0.5 flex h-8 items-center gap-1.5 rounded-lg rounded-tl-sm border border-zinc-800/80 bg-dark-surface/90 px-3 py-2 shadow-sm">
                   <div className="h-1.5 w-1.5 animate-[bounce_1.4s_infinite_0s] rounded-full bg-zinc-500 opacity-70" />
                   <div className="h-1.5 w-1.5 animate-[bounce_1.4s_infinite_0.2s] rounded-full bg-zinc-500 opacity-70" />
                   <div className="h-1.5 w-1.5 animate-[bounce_1.4s_infinite_0.4s] rounded-full bg-zinc-500 opacity-70" />
@@ -527,7 +527,7 @@ export default function ChatPanel() {
             {(["ask", "agent", "plan"] as const).map((item) => (
               <button
                 key={item}
-                className={`flex h-[24px] items-center gap-1.5 rounded border px-2.5 text-[11px] font-bold shadow-sm transition-all ${
+                className={`flex h-6 items-center gap-1.5 rounded border px-2.5 text-[11px] font-bold shadow-sm transition-all ${
                   mode === item
                     ? "border-zinc-600 bg-zinc-700/60 text-zinc-100"
                     : "border-transparent bg-transparent text-zinc-400 hover:bg-zinc-800 hover:text-white"
@@ -557,7 +557,7 @@ export default function ChatPanel() {
                 }
               }}
               placeholder={modeConf.placeholder}
-              className="min-h-[60px] max-h-[160px] w-full resize-none rounded-md border border-zinc-700/80 bg-[#09090b] px-3 py-2 text-[13px] leading-relaxed text-white shadow-inner transition-colors placeholder:text-zinc-600 focus:border-blue-500/70 focus:bg-[#121214] focus:outline-none"
+              className="min-h-15 max-h-40 w-full resize-none rounded-md border border-zinc-700/80 bg-dark-bg px-3 py-2 text-[13px] leading-relaxed text-white shadow-inner transition-colors placeholder:text-zinc-600 focus:border-blue-500/70 focus:bg-[#121214] focus:outline-none"
             />
           </div>
 
