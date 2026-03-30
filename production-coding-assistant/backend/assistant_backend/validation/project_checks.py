@@ -86,7 +86,7 @@ def _iter_requirements(content: str) -> list[str]:
 
 def _validate_requirements(
     content: str,
-    backend_imports: set[str],
+    python_import_origins: dict[str, set[str]],
 ) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     requirements = _iter_requirements(content)
@@ -126,13 +126,20 @@ def _validate_requirements(
             )
 
     for module, package in _PYTHON_IMPORT_TO_PACKAGE.items():
-        if module in backend_imports and package not in packages:
+        if module in python_import_origins and package not in packages:
             issues.append(
                 _issue(
                     "requirements.txt",
-                    f"missing package '{package}' required by backend imports",
+                    f"missing package '{package}' required by Python imports",
                 )
             )
+            for importer_path in sorted(python_import_origins[module]):
+                issues.append(
+                    _issue(
+                        importer_path,
+                        f"remove the '{module}' import or add '{package}' to requirements.txt",
+                    )
+                )
 
     return issues
 
@@ -296,8 +303,8 @@ def _validate_main_tsx(content: str) -> list[dict[str, str]]:
     return issues
 
 
-def _collect_backend_imports(path_to_content: dict[str, str]) -> set[str]:
-    imports: set[str] = set()
+def _collect_python_import_origins(path_to_content: dict[str, str]) -> dict[str, set[str]]:
+    imports: dict[str, set[str]] = {}
     for path, content in path_to_content.items():
         if not path.endswith(".py"):
             continue
@@ -308,9 +315,9 @@ def _collect_backend_imports(path_to_content: dict[str, str]) -> set[str]:
         for node in ast.walk(module):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    imports.add(alias.name.split(".")[0])
+                    imports.setdefault(alias.name.split(".")[0], set()).add(path)
             elif isinstance(node, ast.ImportFrom) and node.module:
-                imports.add(node.module.split(".")[0])
+                imports.setdefault(node.module.split(".")[0], set()).add(path)
     return imports
 
 
@@ -385,6 +392,12 @@ def _validate_python_imports(path_to_content: dict[str, str]) -> list[dict[str, 
                             f"imported symbol '{alias.name}' is not defined in {target_path}",
                         )
                     )
+                    issues.append(
+                        _issue(
+                            target_path,
+                            f"define exported symbol '{alias.name}' because it is imported by {path}",
+                        )
+                    )
     return issues
 
 
@@ -395,10 +408,10 @@ def validate_project_files(
     path_to_content = {item["path"]: item["content"] for item in files}
     issues: list[dict[str, str]] = []
 
-    backend_imports = _collect_backend_imports(path_to_content)
+    python_import_origins = _collect_python_import_origins(path_to_content)
     requirements = path_to_content.get("requirements.txt")
     if requirements:
-        issues.extend(_validate_requirements(requirements, backend_imports))
+        issues.extend(_validate_requirements(requirements, python_import_origins))
 
     if any(path.startswith("frontend/") for path in plan.expected_files):
         frontend_imports = _collect_frontend_imports(path_to_content)

@@ -37,6 +37,7 @@
 - **Git Integration** — status, diff, log, branch, commit, stash, checkout — all sandboxed to workspace root
 - **Code Analysis** — AST-based symbol extraction, cyclomatic complexity metrics, code smell detection (unused imports, long functions, missing docstrings)
 - **Dependency Analysis** — import graph construction, reverse-dependency maps, project structure tree
+- **Web Search** — backend-only Brave / SerpApi / Bing adapters with normalized results, SQLite caching, and tool-call integration for the agent
 
 ## API Endpoint Groups
 

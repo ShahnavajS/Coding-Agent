@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
+from assistant_backend.config import get_cached_settings
 from assistant_backend.core.executor import (
     should_execute,
     validate_generation_output,
@@ -13,9 +16,12 @@ from assistant_backend.core.plan_agent import run_plan_agent
 from assistant_backend.core.planner import create_plan
 from assistant_backend.providers.router import generate as generate_with_provider
 from assistant_backend.storage.database import append_message
+from assistant_backend.tools import run_tool
 from assistant_backend.tools.filesystem_tool import list_files_flat
 
 logger = logging.getLogger(__name__)
+_MAX_TOOL_ITERATIONS = 3
+_AUTO_SEARCH_HINTS = ("latest", "current", "research", "official", "recent", "2025", "2026")
 
 
 def _summarize_accepted_files(accepted_files: list[str] | None) -> str:
@@ -59,7 +65,100 @@ def _build_stack_guidance(plan: Plan) -> str:
             "import \"./styles.css\";\n\n"
             "createRoot(document.getElementById(\"root\")!).render(<App />);\n\n"
         )
+    if {
+        "README.md",
+        "requirements.txt",
+        "app.py",
+        "fastapi_example.py",
+        "flask_example.py",
+        "comparison.py",
+    }.issubset(expected):
+        return (
+            "Stack guidance for this project:\n"
+            "- This is a Python CLI comparison project, not a backend service scaffold.\n"
+            "- Keep exactly the requested files unless the user explicitly asks for more.\n"
+            "- requirements.txt should use modern compatible versions, for example:\n"
+            "  fastapi>=0.110,<1\n"
+            "  flask>=3.0,<4\n"
+            "  uvicorn>=0.29,<1\n"
+            "- app.py should serve as the CLI or entry point for the comparison project.\n"
+            "- fastapi_example.py should show current FastAPI patterns.\n"
+            "- flask_example.py should show current Flask patterns.\n"
+            "- comparison.py should compare the approaches in plain Python code.\n"
+            "- Keep the examples lightweight. Do not add env/settings/config layers unless the user explicitly asks for them.\n"
+            "- Do not import pydantic_settings, SQLAlchemy, auth helpers, or database tooling unless the requested files actually need them.\n"
+            "- Keep function names consistent across app.py and comparison.py. If app.py imports a helper from comparison.py, define that exact function in comparison.py.\n"
+            "- README.md must include a short 'Sources Used' section with the researched links.\n\n"
+        )
+    if {
+        "README.md",
+        "ARCHITECTURE.md",
+        "requirements.txt",
+        "app/main.py",
+        "app/services/rate_limiter.py",
+        "app/services/retry_policy.py",
+    }.issubset(expected):
+        return (
+            "Stack guidance for this project:\n"
+            "- This is a service/system architecture request, not a tiny CLI scaffold.\n"
+            "- Prefer a modular Python service layout with clear separation between config, routes, services, retry logic, and observability.\n"
+            "- If the request mentions chat, prefer FastAPI with WebSocket support for the service entrypoint.\n"
+            "- requirements.txt should use modern compatible versions, for example:\n"
+            "  fastapi>=0.110,<1\n"
+            "  uvicorn>=0.29,<1\n"
+            "  pydantic>=2.6,<3\n"
+            "  pydantic-settings>=2.2,<3\n"
+            "  redis>=5,<6\n"
+            "- app/services/rate_limiter.py should contain the rate-limiting policy.\n"
+            "- app/services/retry_policy.py should contain retry/backoff logic.\n"
+            "- app/observability.py should contain structured logging and monitoring hooks.\n"
+            "- Put bottlenecks, scaling strategy, and operational tradeoffs in ARCHITECTURE.md.\n"
+            "- Keep imports and exported helper names consistent across routes and services.\n\n"
+        )
     return ""
+
+
+def _build_repair_guidance(retry_errors: list[str] | None) -> str:
+    if not retry_errors:
+        return ""
+
+    guidance: list[str] = []
+    joined = "\n".join(retry_errors)
+    required_exports: dict[str, set[str]] = {}
+    if "import Request from 'fastapi', not 'fastapi.requests'" in joined:
+        guidance.append("- Import Request from fastapi, never from fastapi.requests.")
+    if "use BaseSettings from pydantic_settings, not from pydantic" in joined:
+        guidance.append("- If you use BaseSettings, import it from pydantic_settings and keep requirements.txt aligned.")
+    if "imported symbol" in joined:
+        guidance.append("- When you regenerate dependent files, keep imports and exported symbols consistent in the same attempt.")
+
+    import_symbol_re = re.compile(
+        r"(?P<importer>[^:\n]+): imported symbol '(?P<symbol>[^']+)' is not defined in (?P<target>[^\n]+)"
+    )
+    for match in import_symbol_re.finditer(joined):
+        importer = match.group("importer")
+        symbol = match.group("symbol")
+        target = match.group("target")
+        required_exports.setdefault(target, set()).add(symbol)
+        guidance.append(
+            f"- Ensure {target} defines {symbol} exactly as imported by {importer}."
+        )
+
+    contract_lines: list[str] = []
+    for target, symbols in sorted(required_exports.items()):
+        contract_lines.append(
+            f"- {target} must export: {', '.join(sorted(symbols))}"
+        )
+
+    if not guidance and not contract_lines:
+        return ""
+    deduped = list(dict.fromkeys(guidance))
+    sections: list[str] = []
+    if deduped:
+        sections.append("Repair guidance:\n" + "\n".join(deduped))
+    if contract_lines:
+        sections.append("Required export contracts for this retry:\n" + "\n".join(contract_lines))
+    return "\n".join(sections) + "\n"
 
 
 def build_agent_prompt(
@@ -71,17 +170,26 @@ def build_agent_prompt(
     require_structure: bool = True,
     retry_errors: list[str] | None = None,
     attempt: int = 1,
+    research_context: str = "",
 ) -> str:
     active_file = context.get("activeFilePath") or "none"
     selected_text = context.get("selectedText") or ""
     accepted_section = _summarize_accepted_files(accepted_files)
     retry_section = ""
     if retry_errors:
+        retry_action = (
+            "Include the project structure block first, then regenerate only the files listed under "
+            "'Files to generate in this response'."
+            if require_structure
+            else "Regenerate only the files listed under 'Files to generate in this response'. "
+            "Do not repeat already accepted files or the structure tree."
+        )
         retry_section = (
-            "\nPrevious output was rejected. Fix every issue below and regenerate the full result.\n"
+            f"\nPrevious output was rejected. Fix every issue below. {retry_action}\n"
             + "\n".join(f"- {error}" for error in retry_errors)
             + "\n"
         )
+        retry_section += _build_repair_guidance(retry_errors)
 
     expected_files = (
         "\n".join(f"- {path}" for path in remaining_files)
@@ -95,6 +203,12 @@ def build_agent_prompt(
         if require_structure
         else "The project structure has already been accepted. Do not repeat it.\n\n"
     )
+    research_section = ""
+    if research_context:
+        research_section = (
+            "Web search context already collected for this request:\n"
+            f"{research_context}\n\n"
+        )
 
     return (
         "You are the code-generation layer of a production-grade AI coding assistant.\n"
@@ -129,8 +243,14 @@ def build_agent_prompt(
         "- If you use BaseSettings, import it from pydantic_settings and include pydantic-settings in requirements.txt.\n"
         "- If frontend code imports axios or react-router-dom, include them in frontend/package.json.\n"
         "- Do not add Node built-ins like path or fs to frontend/package.json.\n"
+        "- If the user asks for explanations, bottlenecks, or scaling notes, put them in README.md or ARCHITECTURE.md inside FILE blocks.\n"
+        "- If you need current or external information, respond with JSON only using this exact tool shape:\n"
+        '  {"tool":"web_search","query":"your search query","num_results":5}\n'
+        "- Do not mix tool JSON with FILE blocks or explanations.\n"
+        "- After web search results are provided, continue with the requested FILE output.\n"
         "- Output raw executable source code only.\n\n"
         f"{stack_guidance}"
+        f"{research_section}"
         f"User request:\n{message}\n\n"
         f"Active file: {active_file}\n"
         f"Files of interest: {', '.join(plan.files_of_interest) or 'none'}\n"
@@ -159,6 +279,202 @@ def build_ask_prompt(message: str, context: dict[str, Any]) -> str:
         f"Active file: {active_file}"
         f"{selected_block}"
     )
+
+
+def _parse_tool_call(response_text: str) -> tuple[dict[str, Any] | None, str | None]:
+    stripped = response_text.strip()
+    if not stripped or not stripped.startswith("{") or not stripped.endswith("}"):
+        return None, None
+    if '"tool"' not in stripped:
+        return None, None
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        return None, f"Tool call JSON is invalid: {exc.msg}"
+
+    if not isinstance(payload, dict):
+        return None, "Tool call must be a JSON object."
+
+    tool_name = str(payload.get("tool", "")).strip()
+    if tool_name != "web_search":
+        return None, f"Unknown tool requested: {tool_name or 'none'}"
+
+    query = str(payload.get("query", "")).strip()
+    if not query:
+        return None, "web_search tool call must include a non-empty query."
+
+    max_results = get_cached_settings().web_search.max_results
+    raw_num = payload.get("num_results", payload.get("num", max_results))
+    try:
+        num_results = max(1, min(int(raw_num), max_results))
+    except (TypeError, ValueError):
+        return None, "web_search tool call must include a numeric num_results value."
+
+    return {
+        "tool": "web_search",
+        "query": query,
+        "num_results": num_results,
+    }, None
+
+
+def _format_search_results_for_prompt(query: str, results: list[dict[str, str]]) -> str:
+    lines = [f"Search query: {query}"]
+    for index, item in enumerate(results[:6], start=1):
+        title = item.get("title", "").strip() or "(untitled)"
+        source = item.get("source", "").strip() or "unknown source"
+        snippet = item.get("snippet", "").strip() or "No snippet."
+        lines.append(f"{index}. {title} ({source}) - {snippet}")
+        link = item.get("link", "").strip()
+        if link:
+            lines.append(f"   Link: {link}")
+    return "\n".join(lines)
+
+
+def _should_auto_search(message: str) -> bool:
+    lowered = message.lower()
+    return any(token in lowered for token in _AUTO_SEARCH_HINTS)
+
+
+def _build_auto_search_queries(message: str, plan: Plan) -> list[str]:
+    lowered = message.lower()
+    queries: list[str] = []
+    if "fastapi" in lowered and "flask" in lowered:
+        queries.append("latest FastAPI and Flask best practices official docs 2026")
+    elif "fastapi" in lowered and "react" in lowered:
+        queries.append("latest FastAPI React Vite TypeScript setup official docs 2026")
+        queries.append("latest pydantic settings best practices official docs 2026")
+    elif "fastapi" in lowered:
+        queries.append("latest FastAPI best practices official docs 2026")
+    elif "react" in lowered and "vite" in lowered:
+        queries.append("latest React 18 Vite TypeScript setup official docs 2026")
+
+    if not queries:
+        trimmed = " ".join(message.strip().split())
+        queries.append(trimmed[:140])
+
+    deduped: list[str] = []
+    for query in queries:
+        query = query.strip()
+        if query and query not in deduped:
+            deduped.append(query)
+    return deduped[:2]
+
+
+def _generate_with_tools(
+    message: str,
+    context: dict[str, Any],
+    plan: Plan,
+    remaining_files: list[str],
+    accepted_files: list[str],
+    require_structure: bool,
+    retry_errors: list[str],
+    attempt: int,
+    provider_name: str | None,
+    session_id: str,
+) -> dict[str, Any]:
+    research_blocks: list[str] = []
+    tool_events: list[dict[str, Any]] = []
+    provider_status: dict[str, Any] = {"used": False, "provider": provider_name or "none"}
+    search_provider = context.get("webSearchProvider")
+
+    if attempt == 1 and not accepted_files and _should_auto_search(message):
+        for query in _build_auto_search_queries(message, plan):
+            try:
+                results = run_tool(
+                    "web_search",
+                    query=query,
+                    num_results=min(4, get_cached_settings().web_search.max_results),
+                    provider=search_provider,
+                    session_id=session_id,
+                )
+            except Exception as exc:
+                logger.warning("Auto web search failed for query %r: %s", query, exc)
+                continue
+            if not results:
+                continue
+            research_blocks.append(_format_search_results_for_prompt(query, results))
+            tool_events.append(
+                {
+                    "tool": "web_search",
+                    "query": query,
+                    "resultCount": len(results),
+                    "provider": search_provider or get_cached_settings().web_search.provider,
+                    "mode": "auto-seeded",
+                }
+            )
+
+    for tool_iteration in range(1, _MAX_TOOL_ITERATIONS + 1):
+        prompt = build_agent_prompt(
+            message,
+            context,
+            plan,
+            remaining_files=remaining_files,
+            accepted_files=accepted_files,
+            require_structure=require_structure,
+            retry_errors=retry_errors,
+            attempt=attempt,
+            research_context="\n\n".join(research_blocks),
+        )
+        response = generate_with_provider(prompt, provider_name=provider_name)
+        provider_status = {
+            "used": True,
+            "provider": response.provider,
+            "model": response.model,
+        }
+        content = response.content.strip()
+        tool_call, tool_error = _parse_tool_call(content)
+        if tool_error:
+            return {
+                "ok": False,
+                "error": tool_error,
+                "providerStatus": provider_status,
+                "toolEvents": tool_events,
+            }
+        if tool_call is None:
+            return {
+                "ok": True,
+                "content": content,
+                "providerStatus": provider_status,
+                "toolEvents": tool_events,
+            }
+        if tool_iteration == _MAX_TOOL_ITERATIONS:
+            return {
+                "ok": False,
+                "error": "Model kept requesting web_search after the maximum tool iterations.",
+                "providerStatus": provider_status,
+                "toolEvents": tool_events,
+            }
+
+        results = run_tool(
+            "web_search",
+            query=tool_call["query"],
+            num_results=tool_call["num_results"],
+            provider=search_provider,
+            session_id=session_id,
+        )
+        if not results:
+            return {
+                "ok": False,
+                "error": f"web_search returned no results for query: {tool_call['query']}",
+                "providerStatus": provider_status,
+                "toolEvents": tool_events,
+            }
+        research_blocks.append(_format_search_results_for_prompt(tool_call["query"], results))
+        tool_events.append(
+            {
+                "tool": "web_search",
+                "query": tool_call["query"],
+                "resultCount": len(results),
+                "provider": search_provider or get_cached_settings().web_search.provider,
+            }
+        )
+
+    return {
+        "ok": False,
+        "error": "Tool loop exited unexpectedly.",
+        "providerStatus": provider_status,
+        "toolEvents": tool_events,
+    }
 
 
 def _build_agent_steps(plan: Plan) -> tuple[PlanStep, PlanStep, PlanStep]:
@@ -213,30 +529,38 @@ def run_agent_mode(
 
     for attempt in range(1, 4):
         try:
-            response = generate_with_provider(
-                build_agent_prompt(
-                    message,
-                    context,
-                    plan,
-                    remaining_files=remaining_files,
-                    accepted_files=list(accepted_files.keys()),
-                    require_structure=not structure_present,
-                    retry_errors=validation_errors,
-                    attempt=attempt,
-                ),
+            generation = _generate_with_tools(
+                message,
+                context,
+                plan,
+                remaining_files=remaining_files,
+                accepted_files=list(accepted_files.keys()),
+                require_structure=not structure_present,
+                retry_errors=validation_errors,
+                attempt=attempt,
                 provider_name=provider_name,
+                session_id=session_id,
             )
-            provider_status = {
-                "used": True,
-                "provider": response.provider,
-                "model": response.model,
-            }
+            provider_status = generation["providerStatus"]
             execute_step.status = StepStatus.COMPLETED
             execute_step.details = (
                 f"Attempt {attempt} of 3. Remaining files before generation: "
-                f"{len(remaining_files) or plan.expected_file_count}."
+                f"{len(remaining_files) or plan.expected_file_count}. "
+                f"Tool calls used: {len(generation.get('toolEvents', []))}."
             )
-            logger.info("Provider %s responded (%d chars)", response.provider, len(response.content))
+            if not generation["ok"]:
+                validation_errors = [generation["error"]]
+                validate_step.status = StepStatus.FAILED
+                validate_step.details = generation["error"]
+                logger.warning("Generation attempt %d tool phase failed: %s", attempt, generation["error"])
+                continue
+            raw_output = generation["content"]
+            logger.info(
+                "Provider %s responded after %d tool calls (%d chars)",
+                provider_status.get("provider"),
+                len(generation.get("toolEvents", [])),
+                len(raw_output),
+            )
         except Exception as exc:
             logger.exception("Provider call failed for session=%s: %s", session_id, exc)
             execute_step.status = StepStatus.FAILED
@@ -257,7 +581,7 @@ def run_agent_mode(
             }
 
         validation = validate_generation_output(
-            response.content.strip(),
+            raw_output,
             plan,
             required_files=remaining_files,
             require_structure=not structure_present,
@@ -311,11 +635,14 @@ def run_agent_mode(
 
     write_step.status = StepStatus.FAILED
     write_step.error = "Validation failed after 3 attempts."
+    accepted_expected_count = sum(
+        1 for path in plan.expected_files if path in accepted_files
+    )
     final_message = (
         f"{plan.summary}\n\n"
         "Generation failed validation after 3 attempts.\n\n"
         f"Structure:\n{plan.project_structure}\n\n"
-        f"Accepted files so far: {len(accepted_files)} / {plan.expected_file_count}\n\n"
+        f"Accepted files so far: {accepted_expected_count} / {plan.expected_file_count}\n\n"
         "Errors:\n" + "\n".join(f"- {error}" for error in validation_errors)
     )
     return {

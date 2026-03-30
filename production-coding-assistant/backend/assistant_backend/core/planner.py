@@ -16,6 +16,10 @@ _FILE_PATTERN = re.compile(
 )
 
 
+def _contains_word(text: str, word: str) -> bool:
+    return re.search(rf"\b{re.escape(word)}\b", text) is not None
+
+
 def _classify_risk(message: str) -> str:
     lowered = message.lower()
     if any(token in lowered for token in _HIGH_RISK_TOKENS):
@@ -39,6 +43,72 @@ def _find_files_of_interest(message: str, workspace_files: list[str]) -> list[st
     return matched[:5] if matched else workspace_files[:3]
 
 
+def _needs_architecture_notes(lowered: str) -> bool:
+    return any(
+        phrase in lowered
+        for phrase in ("bottleneck", "scaling strategy", "scale strategy", "architecture", "design")
+    )
+
+
+def _looks_like_service_architecture_request(lowered: str, has_explicit_structure: bool) -> bool:
+    if has_explicit_structure:
+        return False
+    service_signals = (
+        "system",
+        "service",
+        "scalable",
+        "concurrent",
+        "rate limiting",
+        "rate limit",
+        "retry logic",
+        "logging",
+        "monitoring",
+        "observability",
+        "modular architecture",
+    )
+    return any(signal in lowered for signal in service_signals)
+
+
+def _infer_service_structure(lowered: str) -> list[str]:
+    inferred = [
+        "README.md",
+        "requirements.txt",
+        ".env.example",
+        "app/main.py",
+        "app/config.py",
+        "app/observability.py",
+        "app/services/rate_limiter.py",
+        "app/services/retry_policy.py",
+    ]
+
+    if "chat" in lowered:
+        inferred.extend(
+            [
+                "ARCHITECTURE.md",
+                "app/models.py",
+                "app/schemas.py",
+                "app/websocket_manager.py",
+                "app/routes/http.py",
+                "app/routes/websocket.py",
+                "app/services/chat_service.py",
+                "app/services/presence_service.py",
+                "tests/test_rate_limiter.py",
+                "tests/test_chat_service.py",
+            ]
+        )
+    else:
+        inferred.extend(
+            [
+                "ARCHITECTURE.md",
+                "app/routes.py",
+                "app/services/core_service.py",
+                "tests/test_service.py",
+            ]
+        )
+
+    return inferred
+
+
 def _extract_explicit_files(message: str) -> list[str]:
     seen: set[str] = set()
     results: list[str] = []
@@ -55,6 +125,7 @@ def _extract_explicit_files(message: str) -> list[str]:
 def _infer_default_structure(message: str, explicit_files: list[str]) -> list[str]:
     lowered = message.lower()
     inferred = list(explicit_files)
+    has_explicit_structure = len(explicit_files) >= 3
 
     if (
         ("full-stack" in lowered or "full stack" in lowered or "backend" in lowered)
@@ -86,7 +157,9 @@ def _infer_default_structure(message: str, explicit_files: list[str]) -> list[st
                 "frontend/src/styles.css",
             ]
         )
-    elif "calculator" in lowered:
+    elif _looks_like_service_architecture_request(lowered, has_explicit_structure):
+        inferred.extend(_infer_service_structure(lowered))
+    elif not has_explicit_structure and "calculator" in lowered:
         inferred.extend(
             [
                 "app.py",
@@ -97,7 +170,14 @@ def _infer_default_structure(message: str, explicit_files: list[str]) -> list[st
                 "README.md",
             ]
         )
-    elif "api" in lowered or "backend" in lowered or "server" in lowered:
+    elif (
+        not has_explicit_structure
+        and (
+            _contains_word(lowered, "api")
+            or _contains_word(lowered, "backend")
+            or _contains_word(lowered, "server")
+        )
+    ):
         inferred.extend(
             [
                 "app.py",
@@ -109,7 +189,14 @@ def _infer_default_structure(message: str, explicit_files: list[str]) -> list[st
                 "README.md",
             ]
         )
-    elif "react" in lowered or "frontend" in lowered or "ui" in lowered:
+    elif (
+        not has_explicit_structure
+        and (
+            "react" in lowered
+            or _contains_word(lowered, "frontend")
+            or _contains_word(lowered, "ui")
+        )
+    ):
         inferred.extend(
             [
                 "src/App.tsx",
@@ -120,7 +207,7 @@ def _infer_default_structure(message: str, explicit_files: list[str]) -> list[st
                 "README.md",
             ]
         )
-    elif _is_code_request(message):
+    elif not has_explicit_structure and _is_code_request(message):
         inferred.extend(
             [
                 "app.py",
@@ -130,6 +217,9 @@ def _infer_default_structure(message: str, explicit_files: list[str]) -> list[st
                 "README.md",
             ]
         )
+
+    if _needs_architecture_notes(lowered) and "ARCHITECTURE.md" not in inferred:
+        inferred.append("ARCHITECTURE.md")
 
     deduped: list[str] = []
     seen: set[str] = set()

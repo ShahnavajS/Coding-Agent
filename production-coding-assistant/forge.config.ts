@@ -16,20 +16,14 @@ const config: ForgeConfig = {
     icon: path.join(__dirname, "desktop", "icons", "app"),
     // Embed the Python backend into the packaged app
     extraResource: ["backend"],
-    // Ignore dev files that shouldn't ship
-    ignore: [
-      /^\/node_modules\/.cache/,
-      /^\/frontend\/node_modules/,
-      /^\/frontend\/src/,
-      /^\/tests/,
-      /^\/\.venv/,
-      /^\/\.assistant/,
-      /\.pyc$/,
-      /^\/workspace\//,
-    ],
+    // Let the Vite plugin keep only the packaged `.vite` output.
+    prune: false,
   },
 
-  rebuildConfig: {},
+  // This app does not ship native Node add-ons, so skip rebuild work.
+  rebuildConfig: {
+    types: [],
+  },
 
   makers: [
     new MakerSquirrel({

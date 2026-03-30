@@ -75,3 +75,5 @@ cd "C:\Users\sanus\Desktop\Coding agent\production-coding-assistant"
 
 - Runtime state is recreated automatically under `.assistant/` when the app runs.
 - See [ARCHITECTURE.md](/C:/Users/sanus/Desktop/Coding%20agent/production-coding-assistant/docs/ARCHITECTURE.md) for the layout summary.
+- Web search can be configured with `BRAVE_SEARCH_API_KEY`, `SERPAPI_API_KEY`, or `BING_SEARCH_API_KEY` plus the `WEB_SEARCH_*` settings in [config/.env.example](/C:/Users/sanus/Desktop/Coding%20agent/production-coding-assistant/config/.env.example).
+- Backend-only search verification is available at `POST /api/agent/search-test`.

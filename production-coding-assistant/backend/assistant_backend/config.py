@@ -19,6 +19,13 @@ APP_DIR = PROJECT_ROOT / ".assistant"
 SETTINGS_PATH = APP_DIR / "settings.json"
 
 
+def _coerce_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class ProviderConfig:
     model: str = ""
@@ -26,6 +33,24 @@ class ProviderConfig:
     api_key_env: str = ""
     model_path: str = ""
     enabled: bool = False
+
+
+@dataclass
+class WebSearchSettings:
+    enabled: bool = True
+    provider: str = "brave"
+    timeout_seconds: int = 12
+    max_results: int = 5
+    cache_ttl_seconds: int = 900
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "provider": self.provider,
+            "timeoutSeconds": self.timeout_seconds,
+            "maxResults": self.max_results,
+            "cacheTtlSeconds": self.cache_ttl_seconds,
+        }
 
 
 @dataclass
@@ -38,6 +63,7 @@ class AppSettings:
     )
     default_provider: str = "ollama"
     shell_timeout_seconds: int = 30
+    web_search: WebSearchSettings = field(default_factory=WebSearchSettings)
     providers: dict[str, ProviderConfig] = field(
         default_factory=lambda: {
             "openai": ProviderConfig(
@@ -89,6 +115,7 @@ class AppSettings:
             "corsOrigins": self.cors_origins,
             "defaultProvider": self.default_provider,
             "shellTimeoutSeconds": self.shell_timeout_seconds,
+            "webSearch": self.web_search.to_public_dict(),
             "providers": providers,
         }
 
@@ -100,6 +127,25 @@ def _provider_from_mapping(data: dict[str, Any]) -> ProviderConfig:
         api_key_env=str(data.get("apiKeyEnv", data.get("api_key_env", ""))),
         model_path=str(data.get("modelPath", data.get("model_path", ""))),
         enabled=bool(data.get("enabled", False)),
+    )
+
+
+def _web_search_from_mapping(data: dict[str, Any], current: WebSearchSettings) -> WebSearchSettings:
+    return WebSearchSettings(
+        enabled=bool(data.get("enabled", current.enabled)),
+        provider=str(data.get("provider", current.provider)).strip() or current.provider,
+        timeout_seconds=_coerce_int(
+            data.get("timeoutSeconds", data.get("timeout_seconds")),
+            current.timeout_seconds,
+        ),
+        max_results=_coerce_int(
+            data.get("maxResults", data.get("max_results")),
+            current.max_results,
+        ),
+        cache_ttl_seconds=_coerce_int(
+            data.get("cacheTtlSeconds", data.get("cache_ttl_seconds")),
+            current.cache_ttl_seconds,
+        ),
     )
 
 
@@ -141,11 +187,7 @@ def get_provider_status(name: str, cfg: ProviderConfig) -> tuple[bool, bool, str
 
 
 def load_app_settings() -> AppSettings:
-    """Load settings from .env and the JSON settings file.
-
-    Note: call get_cached_settings() instead of this function in hot paths
-    to avoid disk reads on every request.
-    """
+    """Load settings from .env and the JSON settings file."""
     load_dotenv(ROOT_DIR / ".env")
     APP_DIR.mkdir(parents=True, exist_ok=True)
     settings = AppSettings(
@@ -153,7 +195,7 @@ def load_app_settings() -> AppSettings:
             "WORKSPACE_PATH", str((PROJECT_ROOT / "workspace").resolve())
         ),
         backend_host=os.getenv("BACKEND_HOST", "0.0.0.0"),
-        backend_port=int(os.getenv("BACKEND_PORT", "5000")),
+        backend_port=_coerce_int(os.getenv("BACKEND_PORT"), 5000),
         cors_origins=[
             origin.strip()
             for origin in os.getenv(
@@ -162,7 +204,14 @@ def load_app_settings() -> AppSettings:
             if origin.strip()
         ],
         default_provider=os.getenv("DEFAULT_PROVIDER", "ollama"),
-        shell_timeout_seconds=int(os.getenv("SHELL_TIMEOUT_SECONDS", "30")),
+        shell_timeout_seconds=_coerce_int(os.getenv("SHELL_TIMEOUT_SECONDS"), 30),
+        web_search=WebSearchSettings(
+            enabled=os.getenv("WEB_SEARCH_ENABLED", "true").lower() != "false",
+            provider=os.getenv("WEB_SEARCH_PROVIDER", "brave"),
+            timeout_seconds=_coerce_int(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS"), 12),
+            max_results=_coerce_int(os.getenv("WEB_SEARCH_MAX_RESULTS"), 5),
+            cache_ttl_seconds=_coerce_int(os.getenv("WEB_SEARCH_CACHE_TTL_SECONDS"), 900),
+        ),
     )
 
     if SETTINGS_PATH.exists():
@@ -172,31 +221,39 @@ def load_app_settings() -> AppSettings:
         settings.default_provider = str(
             raw.get("defaultProvider", settings.default_provider)
         )
-        settings.shell_timeout_seconds = int(
-            raw.get("shellTimeoutSeconds", settings.shell_timeout_seconds)
+        settings.shell_timeout_seconds = _coerce_int(
+            raw.get("shellTimeoutSeconds"),
+            settings.shell_timeout_seconds,
         )
+        web_search_data = raw.get("webSearch", {})
+        if isinstance(web_search_data, dict):
+            settings.web_search = _web_search_from_mapping(
+                web_search_data,
+                settings.web_search,
+            )
+
         provider_data = raw.get("providers", {})
         merged_providers: dict[str, ProviderConfig] = dict(settings.providers)
         for provider_name, provider_config in provider_data.items():
             merged_providers[provider_name] = _provider_from_mapping(provider_config)
         settings.providers = merged_providers
 
-    logger.debug("App settings loaded (provider: %s)", settings.default_provider)
+    logger.debug(
+        "App settings loaded (provider=%s search=%s)",
+        settings.default_provider,
+        settings.web_search.provider,
+    )
     return settings
 
 
 @lru_cache(maxsize=1)
 def get_cached_settings() -> AppSettings:
-    """Return a cached AppSettings instance.
-
-    Use this in hot paths (tool calls, request handlers) to avoid hitting
-    disk on every request. Call _invalidate_settings_cache() after any write.
-    """
+    """Return a cached AppSettings instance."""
     return load_app_settings()
 
 
 def _invalidate_settings_cache() -> None:
-    """Clear the settings cache so the next call to get_cached_settings() reloads from disk."""
+    """Clear the settings cache so the next call reloads from disk."""
     get_cached_settings.cache_clear()
     logger.debug("Settings cache cleared")
 
@@ -204,7 +261,8 @@ def _invalidate_settings_cache() -> None:
 def save_app_settings(settings: AppSettings) -> None:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(
-        json.dumps(settings.to_public_dict(), indent=2), encoding="utf-8"
+        json.dumps(settings.to_public_dict(), indent=2),
+        encoding="utf-8",
     )
     logger.info("Settings saved to %s", SETTINGS_PATH)
 
@@ -216,11 +274,19 @@ def update_app_settings(payload: dict[str, Any]) -> AppSettings:
     if "defaultProvider" in payload:
         settings.default_provider = str(payload["defaultProvider"])
     if "shellTimeoutSeconds" in payload:
-        settings.shell_timeout_seconds = int(payload["shellTimeoutSeconds"])
+        settings.shell_timeout_seconds = _coerce_int(
+            payload["shellTimeoutSeconds"],
+            settings.shell_timeout_seconds,
+        )
+    web_search_payload = payload.get("webSearch")
+    if isinstance(web_search_payload, dict):
+        settings.web_search = _web_search_from_mapping(
+            web_search_payload,
+            settings.web_search,
+        )
     provider_payload = payload.get("providers", {})
     for provider_name, provider_config in provider_payload.items():
         settings.providers[provider_name] = _provider_from_mapping(provider_config)
     save_app_settings(settings)
-    # Invalidate cache so the next call picks up the new settings.
     _invalidate_settings_cache()
     return settings

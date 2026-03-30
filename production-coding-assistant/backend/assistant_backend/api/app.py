@@ -27,6 +27,7 @@ from assistant_backend.tools.shell_tool import execute_command
 from assistant_backend.tools.ast_editor import structured_update
 from assistant_backend.tools.structured_editor import apply_pending_diff, preview_file_update
 from assistant_backend.validation.parser_checks import validate_content
+from assistant_backend.tools.web_search import web_search
 from assistant_backend.tools.grep_tool import grep_workspace, find_and_replace
 from assistant_backend.tools.git_tool import (
     git_status, git_diff, git_log, git_current_branch, git_branches,
@@ -245,6 +246,23 @@ def create_app() -> Flask:
                 "architecture": "planner-executor-debugger-foundation",
             },
         })
+
+    @app.route("/api/agent/search-test", methods=["POST"])
+    def agent_search_test():
+        payload = request.get_json(force=True) or {}
+        query = payload.get("query", "").strip()
+        if not query:
+            return _bad_request("'query' is required")
+        try:
+            results = web_search(
+                query,
+                int(payload.get("numResults", payload.get("num_results", 5))),
+                payload.get("provider"),
+                session_id=payload.get("sessionId"),
+            )
+        except (ValueError, RuntimeError) as exc:
+            return _bad_request(str(exc))
+        return jsonify({"success": True, "data": {"results": results}})
 
     # --------------------------------------------------------------- terminal
 
