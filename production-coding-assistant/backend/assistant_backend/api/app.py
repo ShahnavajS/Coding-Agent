@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request, stream_with_context
 from flask_cors import CORS
 
 from assistant_backend.config import get_cached_settings, update_app_settings
 from assistant_backend.core.checkpoints import rollback_checkpoint
+from assistant_backend.core.context_builder import build_context_snapshot
+from assistant_backend.core.models import AgentMode
 from assistant_backend.core.orchestrator import run_agent
+from assistant_backend.core.planner import create_plan
 from assistant_backend.storage.database import (
     create_session,
     delete_session,
@@ -28,6 +32,7 @@ from assistant_backend.tools.ast_editor import structured_update
 from assistant_backend.tools.structured_editor import apply_pending_diff, preview_file_update
 from assistant_backend.validation.parser_checks import validate_content
 from assistant_backend.tools.web_search import web_search
+from assistant_backend.tools.docker_sandbox_tool import docker_available
 from assistant_backend.tools.grep_tool import grep_workspace, find_and_replace
 from assistant_backend.tools.git_tool import (
     git_status, git_diff, git_log, git_current_branch, git_branches,
@@ -40,6 +45,7 @@ from assistant_backend.tools.code_analysis_tool import (
 from assistant_backend.tools.dependency_tool import (
     analyze_dependencies, get_project_structure,
 )
+from assistant_backend.validation.sandbox_validator import validate_files_in_docker_sandbox
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +58,14 @@ def _bad_request(message: str):
 def _server_error(message: str):
     """Return a 500 JSON error response."""
     return jsonify({"success": False, "error": message}), 500
+
+
+def _chunk_text(text: str, chunk_size: int = 160):
+    """Yield readable chunks for SSE fallback streaming."""
+    if not text:
+        return
+    for index in range(0, len(text), chunk_size):
+        yield text[index:index + chunk_size]
 
 
 def create_app() -> Flask:
@@ -236,6 +250,126 @@ def create_app() -> Flask:
         response["sessionId"] = session_id
         return jsonify({"success": True, "data": response})
 
+    # -------------------------------------------------------- agent: streaming
+
+    @app.route("/api/agent/stream", methods=["POST"])
+    def agent_stream():
+        """SSE endpoint that preserves session persistence and smart backend routing.
+
+        Streams text/event-stream events of the form:
+            data: {"type": "token", "token": "hello"}
+            data: {"type": "done", "fullText": "hello world"}
+            data: {"type": "error", "error": "..."}
+
+        All modes go through the same backend agent pipeline first so context
+        snapshots, follow-up resolution, tool use, and file generation stay
+        consistent. The resulting text is then streamed back in readable chunks.
+        """
+        payload = request.get_json(force=True) or {}
+        message = payload.get("message", "").strip()
+        if not message:
+            return _bad_request("'message' is required")
+
+        session_id = payload.get("sessionId")
+        if not session_id:
+            sess = create_session("Stream Session")
+            session_id = sess["id"]
+
+        context_data = payload.get("context") or {}
+        provider_name = context_data.get("provider")
+        mode = context_data.get("mode", AgentMode.ASK)
+
+        def _sse_event(obj: dict) -> str:
+            return f"data: {json.dumps(obj)}\n\n"
+
+        @stream_with_context
+        def _generate():
+            try:
+                result = run_agent(message, session_id, context_data)
+            except Exception as exc:
+                logger.exception("Streaming execution error: %s", exc)
+                yield _sse_event({"type": "error", "error": str(exc)})
+                return
+
+            full_text = result.get("message", "")
+            for token in _chunk_text(full_text):
+                yield _sse_event({"type": "token", "token": token})
+
+            yield _sse_event(
+                {
+                    "type": "done",
+                    "fullText": full_text,
+                    "sessionId": session_id,
+                    "filesModified": result.get("filesModified", []),
+                    "steps": result.get("steps", []),
+                    "providerStatus": result.get("providerStatus"),
+                    "mode": result.get("mode", mode),
+                }
+            )
+
+        return Response(
+            _generate(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",  # disable nginx buffering
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+
+    # -------------------------------------------------------- agent: decompose
+
+    @app.route("/api/agent/decompose", methods=["POST"])
+    def agent_decompose():
+        """Decompose a complex request into subtasks without executing code."""
+        payload = request.get_json(force=True) or {}
+        message = payload.get("message", "").strip()
+        if not message:
+            return _bad_request("'message' is required")
+        session_id = payload.get("sessionId")
+        if not session_id:
+            sess = create_session("Decompose Session")
+            session_id = sess["id"]
+        context_data = payload.get("context") or {}
+        # Force the DECOMPOSE mode on the context
+        context_data["mode"] = AgentMode.DECOMPOSE
+        try:
+            result = run_agent(message, session_id, context_data)
+        except Exception as exc:
+            logger.exception("Decompose error for session %s: %s", session_id, exc)
+            return _server_error(f"Decompose failed: {exc}")
+        return jsonify({"success": True, "data": result})
+
+    # --------------------------------------------------- context: snapshot
+
+    @app.route("/api/context/snapshot", methods=["POST"])
+    def context_snapshot():
+        """Return the current codebase context snapshot for a session.
+
+        Useful for the frontend to display what files the agent is 'seeing'
+        before it generates a response.
+        """
+        payload = request.get_json(force=True) or {}
+        session_id = payload.get("sessionId", "")
+        context_data = payload.get("context") or {}
+        message = payload.get("message", "").strip()
+
+        from assistant_backend.tools.filesystem_tool import list_files_flat as _list
+        workspace_files = [item["path"] for item in _list() if item["type"] == "file"]
+        plan = create_plan(message or "context snapshot", workspace_files)
+        snapshot = build_context_snapshot(session_id or None, plan.files_of_interest, context_data)
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "activeFilePath": snapshot.active_file_path,
+                "filesOfInterest": list(snapshot.file_snippets.keys()),
+                "historyLength": len(snapshot.recent_messages),
+                "selectedText": snapshot.selected_text[:200] if snapshot.selected_text else "",
+            },
+        })
+
     @app.route("/api/agent/status", methods=["GET"])
     def agent_status():
         return jsonify({
@@ -263,6 +397,41 @@ def create_app() -> Flask:
         except (ValueError, RuntimeError) as exc:
             return _bad_request(str(exc))
         return jsonify({"success": True, "data": {"results": results}})
+
+    @app.route("/api/agent/sandbox-test", methods=["POST"])
+    def agent_sandbox_test():
+        payload = request.get_json(force=True) or {}
+        available, reason = docker_available()
+        if payload.get("probeOnly", False):
+            return jsonify({
+                "success": True,
+                "data": {
+                    "available": available,
+                    "reason": reason,
+                    "settings": get_cached_settings().docker_sandbox.to_public_dict(),
+                },
+            })
+
+        files = payload.get("files")
+        if not isinstance(files, list) or not files:
+            files = [
+                {
+                    "path": "sandbox_check.py",
+                    "content": "print('docker sandbox ok')\n",
+                }
+            ]
+        try:
+            result = validate_files_in_docker_sandbox(files)
+        except (ValueError, RuntimeError) as exc:
+            return _bad_request(str(exc))
+        return jsonify({
+            "success": result["ok"],
+            "data": {
+                "available": available,
+                "reason": reason,
+                "result": result,
+            },
+        })
 
     # --------------------------------------------------------------- terminal
 

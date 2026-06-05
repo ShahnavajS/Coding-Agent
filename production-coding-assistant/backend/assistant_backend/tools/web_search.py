@@ -32,6 +32,11 @@ _TRACKING_QUERY_KEYS = {
     "ref_src",
     "source",
 }
+_SEARCH_PROVIDER_ENV_VARS = {
+    "brave": "BRAVE_SEARCH_API_KEY",
+    "serpapi": "SERPAPI_API_KEY",
+    "bing": "BING_SEARCH_API_KEY",
+}
 
 
 def _normalize_query(query: str) -> str:
@@ -261,6 +266,21 @@ def _search_live(provider: str, query: str, num_results: int, timeout_seconds: i
     raise ValueError(f"Unsupported web search provider: {provider}")
 
 
+def _provider_is_configured(provider: str) -> bool:
+    env_var = _SEARCH_PROVIDER_ENV_VARS.get(provider)
+    return bool(env_var and os.getenv(env_var, "").strip())
+
+
+def _resolve_provider_order(preferred_provider: str) -> list[str]:
+    providers = [preferred_provider, "brave", "serpapi", "bing"]
+    ordered: list[str] = []
+    for provider in providers:
+        normalized = provider.strip().lower()
+        if normalized and normalized not in ordered:
+            ordered.append(normalized)
+    return ordered
+
+
 def web_search(
     query: str,
     num_results: int = 5,
@@ -276,60 +296,88 @@ def web_search(
     resolved_provider = (provider or search_settings.provider).strip().lower()
     normalized_query = _normalize_query(query)
     bounded_results = _clamp_num_results(num_results, search_settings.max_results)
-    query_hash = _hash_query(resolved_provider, normalized_query, bounded_results)
+    last_error: Exception | None = None
 
-    cached = get_cached_web_search(resolved_provider, query_hash)
-    if cached is not None:
-        log_tool_invocation(
-            session_id,
-            "web_search",
-            {
-                "provider": resolved_provider,
-                "query": normalized_query,
-                "num_results": bounded_results,
-                "cache_hit": True,
-            },
-            {"results": cached["results"]},
-            success=True,
-        )
-        return cached["results"]
+    for candidate_provider in _resolve_provider_order(resolved_provider):
+        if not _provider_is_configured(candidate_provider):
+            continue
 
-    try:
-        results = _search_live(
-            resolved_provider,
-            normalized_query,
-            bounded_results,
-            search_settings.timeout_seconds,
+        query_hash = _hash_query(candidate_provider, normalized_query, bounded_results)
+        cached = get_cached_web_search(candidate_provider, query_hash)
+        if cached is not None:
+            log_tool_invocation(
+                session_id,
+                "web_search",
+                {
+                    "provider": candidate_provider,
+                    "query": normalized_query,
+                    "num_results": bounded_results,
+                    "cache_hit": True,
+                    "requested_provider": resolved_provider,
+                },
+                {"results": cached["results"]},
+                success=True,
+            )
+            return cached["results"]
+
+        try:
+            results = _search_live(
+                candidate_provider,
+                normalized_query,
+                bounded_results,
+                search_settings.timeout_seconds,
+            )
+            expires_at = (
+                datetime.now(timezone.utc)
+                + timedelta(seconds=search_settings.cache_ttl_seconds)
+            ).isoformat()
+            store_cached_web_search(candidate_provider, query_hash, results, expires_at)
+            log_tool_invocation(
+                session_id,
+                "web_search",
+                {
+                    "provider": candidate_provider,
+                    "query": normalized_query,
+                    "num_results": bounded_results,
+                    "cache_hit": False,
+                    "requested_provider": resolved_provider,
+                },
+                {"results": results},
+                success=True,
+            )
+            return results
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "web_search provider %s failed for query %r: %s",
+                candidate_provider,
+                normalized_query,
+                exc,
+            )
+            continue
+
+    available_hints = ", ".join(
+        env_var for provider_name, env_var in _SEARCH_PROVIDER_ENV_VARS.items()
+        if provider_name in _resolve_provider_order(resolved_provider)
+    )
+    error_text = (
+        str(last_error)
+        if last_error is not None
+        else (
+            "Web search is not configured. Set one of these environment variables: "
+            f"{available_hints}"
         )
-        expires_at = (
-            datetime.now(timezone.utc)
-            + timedelta(seconds=search_settings.cache_ttl_seconds)
-        ).isoformat()
-        store_cached_web_search(resolved_provider, query_hash, results, expires_at)
-        log_tool_invocation(
-            session_id,
-            "web_search",
-            {
-                "provider": resolved_provider,
-                "query": normalized_query,
-                "num_results": bounded_results,
-                "cache_hit": False,
-            },
-            {"results": results},
-            success=True,
-        )
-        return results
-    except Exception as exc:
-        log_tool_invocation(
-            session_id,
-            "web_search",
-            {
-                "provider": resolved_provider,
-                "query": normalized_query,
-                "num_results": bounded_results,
-                "cache_hit": False,
-            },
-            success=False,
-            error_text=str(exc),
-        )
-        raise
+    )
+    log_tool_invocation(
+        session_id,
+        "web_search",
+        {
+            "provider": resolved_provider,
+            "query": normalized_query,
+            "num_results": bounded_results,
+            "cache_hit": False,
+        },
+        success=False,
+        error_text=error_text,
+    )
+    raise RuntimeError(error_text)

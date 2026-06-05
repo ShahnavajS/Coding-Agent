@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 import subprocess
 from typing import Any
@@ -25,6 +26,12 @@ DANGEROUS_COMMAND_TOKENS = {
     "wget",
 }
 
+_WINDOWS_POWERSHELL = [
+    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "-NoProfile",
+    "-Command",
+]
+
 
 def classify_command(command: str) -> str:
     """Return 'review' if the command needs approval, 'safe' otherwise."""
@@ -38,10 +45,17 @@ def classify_command(command: str) -> str:
     return "review" if parts[0].lower() in DANGEROUS_COMMAND_TOKENS else "safe"
 
 
+def _build_subprocess_args(command: str) -> list[str]:
+    """Build a safe subprocess argv for the current platform."""
+    if os.name == "nt":
+        return [*_WINDOWS_POWERSHELL, command]
+    return shlex.split(command, posix=True)
+
+
 def execute_command(command: str, approved: bool = False) -> dict[str, Any]:
     """Execute a shell command inside the workspace directory.
 
-    Uses shell=False with shlex.split() to prevent shell injection.
+    Uses shell=False with a platform-specific argv builder.
     Commands classified as 'review' require explicit approval.
     """
     risk = classify_command(command)
@@ -59,8 +73,7 @@ def execute_command(command: str, approved: bool = False) -> dict[str, Any]:
     settings = get_cached_settings()
 
     try:
-        # Split into a list and use shell=False to prevent shell injection attacks.
-        args = shlex.split(command, posix=False)
+        args = _build_subprocess_args(command)
     except ValueError as exc:
         logger.error("Failed to parse command %r: %s", command, exc)
         return {
@@ -76,12 +89,22 @@ def execute_command(command: str, approved: bool = False) -> dict[str, Any]:
     try:
         result = subprocess.run(
             args,
-            shell=False,  # Never use shell=True — prevents shell injection
+            shell=False,
             cwd=workspace_root(),
             capture_output=True,
             text=True,
             timeout=settings.shell_timeout_seconds,
         )
+    except FileNotFoundError as exc:
+        logger.error("Command executable not found for %r: %s", command, exc)
+        return {
+            "success": False,
+            "requiresApproval": False,
+            "risk": risk,
+            "stdout": "",
+            "stderr": f"Command could not be started: {exc}",
+            "exitCode": 1,
+        }
     except subprocess.TimeoutExpired:
         logger.warning("Command timed out after %ds: %r", settings.shell_timeout_seconds, command)
         return {

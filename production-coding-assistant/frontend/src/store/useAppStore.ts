@@ -31,6 +31,9 @@ interface StoreActions {
   toggleBottomPanel: () => void;
   toggleSettings: () => void;
   setTheme: (theme: "dark" | "light") => void;
+  // Streaming
+  setIsStreaming: (v: boolean) => void;
+  appendToLastMessage: (chunk: string) => void;
 }
 
 export const useAppStore = create<AppState & StoreActions>((set) => ({
@@ -39,6 +42,7 @@ export const useAppStore = create<AppState & StoreActions>((set) => ({
   tabs: [],
   messages: [],
   diffViewer: null,
+  isStreaming: false,
   terminal: {
     id: "main",
     output: [],
@@ -137,4 +141,16 @@ export const useAppStore = create<AppState & StoreActions>((set) => ({
   toggleSettings: () =>
     set((state) => ({ isSettingsOpen: !state.isSettingsOpen })),
   setTheme: (theme) => set({ theme }),
+  setIsStreaming: (v) => set({ isStreaming: v }),
+  appendToLastMessage: (chunk) =>
+    set((state) => {
+      const messages = [...state.messages];
+      if (messages.length === 0) return {};
+      const last = messages[messages.length - 1];
+      messages[messages.length - 1] = {
+        ...last,
+        content: last.content + chunk,
+      };
+      return { messages };
+    }),
 }));

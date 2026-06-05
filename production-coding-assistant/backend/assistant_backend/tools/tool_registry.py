@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from assistant_backend.tools.docker_sandbox_tool import run_in_sandbox
 from assistant_backend.tools.web_search import web_search
 
 ToolFn = Callable[..., Any]
 
 TOOLS: dict[str, ToolFn] = {
+    "docker_sandbox": run_in_sandbox,
     "web_search": web_search,
 }
 

@@ -330,6 +330,20 @@ def _symbol_exists_in_python_file(content: str, symbol: str) -> bool:
         module = ast.parse(content)
     except SyntaxError:
         return True
+    
+    # Check __all__ list first (package re-exports)
+    for node in module.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "__all__":
+                    # Check if this is a list/tuple of strings
+                    if isinstance(node.value, (ast.List, ast.Tuple)):
+                        for elt in node.value.elts:
+                            if isinstance(elt, ast.Constant) and elt.value == symbol:
+                                return True
+                    break
+    
+    # Check for direct definitions and imports
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             if node.name == symbol:
@@ -378,10 +392,21 @@ def _validate_python_imports(path_to_content: dict[str, str]) -> list[dict[str, 
                     _issue(path, "use BaseSettings from pydantic_settings, not from pydantic")
                 )
 
+            # Try both module.py and module/__init__.py (for packages)
             target_path = _module_to_path(node.module)
-            if target_path not in path_to_content:
+            init_path = target_path.replace(".py", "/__init__.py")
+            
+            # Prefer __init__.py if it exists (package import)
+            if init_path in path_to_content:
+                target_content = path_to_content[init_path]
+                check_path = init_path
+            elif target_path in path_to_content:
+                target_content = path_to_content[target_path]
+                check_path = target_path
+            else:
+                # Target module not in generated files, skip validation
                 continue
-            target_content = path_to_content[target_path]
+                
             for alias in node.names:
                 if alias.name == "*":
                     continue
@@ -389,12 +414,12 @@ def _validate_python_imports(path_to_content: dict[str, str]) -> list[dict[str, 
                     issues.append(
                         _issue(
                             path,
-                            f"imported symbol '{alias.name}' is not defined in {target_path}",
+                            f"imported symbol '{alias.name}' is not defined in {check_path}",
                         )
                     )
                     issues.append(
                         _issue(
-                            target_path,
+                            check_path,
                             f"define exported symbol '{alias.name}' because it is imported by {path}",
                         )
                     )

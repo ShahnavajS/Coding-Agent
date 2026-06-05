@@ -24,7 +24,7 @@ import {
 } from "../../utils/fileUtils";
 import type { Message, SessionInfo } from "../../types";
 
-type Mode = "ask" | "agent" | "plan";
+type Mode = "ask" | "agent" | "plan" | "decompose";
 
 function mapMsgs(
   raw: Array<{
@@ -102,7 +102,7 @@ function StepRow({
       <CheckCircle2 size={13} className="text-teal-500" strokeWidth={2.5} />
     ) : step.status === "failed" ? (
       <AlertCircle size={13} className="text-red-500" strokeWidth={2.5} />
-    ) : step.status === "in-progress" ? (
+    ) : step.status === "in-progress" || step.status === "running" ? (
       <Clock size={13} className="text-amber-400" strokeWidth={2.5} />
     ) : (
       <Clock size={13} className="text-zinc-600" strokeWidth={2.5} />
@@ -266,6 +266,11 @@ const MODE_CONFIG: Record<
     placeholder: "Describe what you want to plan or research...",
     statusPrefix: "Planning...",
   },
+  decompose: {
+    icon: <Bot size={12} strokeWidth={2.5} />,
+    placeholder: "Describe a task to decompose...",
+    statusPrefix: "Decomposing...",
+  },
 };
 
 export default function ChatPanel() {
@@ -280,6 +285,7 @@ export default function ChatPanel() {
     settings,
     isRightPanelOpen,
     setSessionId,
+    setIsStreaming,
     setStatusText,
     upsertTab,
     setFiles,
@@ -308,12 +314,35 @@ export default function ChatPanel() {
 
   if (!isRightPanelOpen) return null;
 
+  const hydrateSession = async (id: string) => {
+    if (!id) return;
+    replaceMessages(mapMsgs(await sessionsAPI.getMessages(id)));
+    setSessionId(id);
+  };
+
+  const refreshModifiedFiles = async (paths: string[]) => {
+    if (!paths.length) return;
+    const files = await fileAPI.listFiles();
+    setFiles(buildFileTree(files));
+    for (const path of paths.slice(0, 6)) {
+      const content = await fileAPI.readFile(path);
+      const name = path.split("/").pop() ?? path;
+      upsertTab({
+        id: path,
+        name,
+        path,
+        content,
+        language: getLanguageFromFileName(name),
+        isDirty: false,
+      });
+    }
+  };
+
   const switchSession = async (id: string) => {
-    if (!id || id === sessionId) return;
+    if (!id) return;
     setSwitching(true);
     try {
-      replaceMessages(mapMsgs(await sessionsAPI.getMessages(id)));
-      setSessionId(id);
+      await hydrateSession(id);
       setStatusText("Session switched");
     } catch (error) {
       setStatusText(`Switch failed: ${error instanceof Error ? error.message : error}`);
@@ -377,6 +406,7 @@ export default function ChatPanel() {
       await refreshSessions();
     }
 
+    // Add User Message
     addMessage({
       id: `u-${Date.now()}`,
       type: "user",
@@ -384,59 +414,86 @@ export default function ChatPanel() {
       timestamp: new Date(),
     });
 
-    setInput("");
-    setLoading(true);
-    setStatusText(modeConf.statusPrefix);
-
-    try {
-      const response = await agentAPI.sendMessage(prompt, currentSessionId, {
-        activeFilePath: activeTab?.path,
-        provider: settings?.defaultProvider,
-        mode,
-      });
-
-      setSessionId(response.sessionId);
+    const usesStreaming = mode === "ask";
+    if (usesStreaming) {
       addMessage({
         id: `a-${Date.now()}`,
         type: "assistant",
-        content: response.message,
+        content: "",
         timestamp: new Date(),
-        steps: response.steps,
       });
+    }
 
-      if (response.filesModified.length > 0) {
-        const files = await fileAPI.listFiles();
-        setFiles(buildFileTree(files));
+    setInput("");
+    setLoading(true);
+    setIsStreaming(usesStreaming);
+    setStatusText(modeConf.statusPrefix);
 
-        for (const path of response.filesModified.slice(0, 6)) {
-          const content = await fileAPI.readFile(path);
-          const name = path.split("/").pop() ?? path;
-          upsertTab({
-            id: path,
-            name,
-            path,
-            content,
-            language: getLanguageFromFileName(name),
-            isDirty: false,
-          });
-        }
-
-        setStatusText(`Generated ${response.filesModified.length} files`);
+    try {
+      if (mode === "ask") {
+        await agentAPI.stream(
+          prompt,
+          currentSessionId,
+          {
+            activeFilePath: activeTab?.path,
+            provider: settings?.defaultProvider,
+            mode,
+          },
+          {
+            onToken: (chunk) => {
+              useAppStore.getState().appendToLastMessage(chunk);
+            },
+            onDone: async (payload) => {
+              await hydrateSession(payload.sessionId);
+              await refreshModifiedFiles(payload.filesModified ?? []);
+              setStatusText("Completed");
+            },
+          }
+        );
+      } else if (mode === "decompose") {
+        const response = await agentAPI.decompose(prompt, currentSessionId, {
+          activeFilePath: activeTab?.path,
+          provider: settings?.defaultProvider,
+          mode,
+        });
+        setSessionId(response.sessionId);
+        await refreshModifiedFiles(response.filesModified ?? []);
+        await hydrateSession(response.sessionId);
+        setStatusText("Decomposition ready");
       } else {
-        setStatusText(mode === "plan" ? "Plan ready" : "Completed");
+        const response = await agentAPI.sendMessage(prompt, currentSessionId, {
+          activeFilePath: activeTab?.path,
+          provider: settings?.defaultProvider,
+          mode,
+        });
+        setSessionId(response.sessionId);
+        await refreshModifiedFiles(response.filesModified ?? []);
+        await hydrateSession(response.sessionId);
+        setStatusText(
+          mode === "plan"
+            ? "Plan ready"
+            : response.filesModified.length > 0
+              ? `Generated ${response.filesModified.length} files`
+              : "Completed"
+        );
       }
-
       await refreshSessions();
     } catch (error) {
-      addMessage({
-        id: `err-${Date.now()}`,
-        type: "assistant",
-        content: `Error: ${error instanceof Error ? error.message : error}`,
-        timestamp: new Date(),
-      });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (usesStreaming) {
+        useAppStore.getState().appendToLastMessage(`\n\n**Error:** ${errorMessage}`);
+      } else {
+        addMessage({
+          id: `a-err-${Date.now()}`,
+          type: "assistant",
+          content: `Error: ${errorMessage}`,
+          timestamp: new Date(),
+        });
+      }
       setStatusText("Failed");
     } finally {
       setLoading(false);
+      setIsStreaming(false);
     }
   };
 
@@ -493,6 +550,8 @@ export default function ChatPanel() {
                 <div className="font-medium tracking-wide">
                   {mode === "plan"
                     ? "Describe a system architecture or research topic to map out."
+                    : mode === "decompose"
+                      ? "Break a large task into ordered subtasks before implementation."
                     : mode === "ask"
                       ? "Ask any question about your codebase."
                       : "Describe what features you want me to write or modify."}
@@ -524,7 +583,7 @@ export default function ChatPanel() {
 
         <div className="z-20 shrink-0 border-t border-zinc-800/80 bg-[#121214] pb-2 shadow-[0_-4px_16px_rgba(0,0,0,0.3)] backdrop-blur-md">
           <div className="flex items-center gap-1.5 px-3.5 pb-1 pt-3">
-            {(["ask", "agent", "plan"] as const).map((item) => (
+            {(["ask", "agent", "plan", "decompose"] as const).map((item) => (
               <button
                 key={item}
                 className={`flex h-6 items-center gap-1.5 rounded border px-2.5 text-[11px] font-bold shadow-sm transition-all ${
@@ -574,7 +633,7 @@ export default function ChatPanel() {
               disabled={!input.trim() || loading || switching}
             >
               <Send size={12} strokeWidth={2.5} />
-              {mode === "plan" ? "Plan" : mode === "ask" ? "Ask" : "Send"}
+              {mode === "plan" ? "Plan" : mode === "ask" ? "Ask" : mode === "decompose" ? "Break Down" : "Send"}
             </button>
           </div>
 

@@ -24,6 +24,8 @@ CODE_REQUEST_TOKENS = (
     "update",
 )
 FILE_HEADER_RE = re.compile(r"^FILE:\s+(.+?)\s*$")
+_FASTAPI_MIN_VERSION = (0, 100, 0)
+_UVICORN_MIN_VERSION = (0, 23, 0)
 
 
 def should_execute(message: str) -> bool:
@@ -110,6 +112,200 @@ def extract_structure_block(raw_output: str) -> str:
         if line.strip():
             lines.append(line.rstrip())
     return "\n".join(lines).strip()
+
+
+def _serialize_generation_output(
+    structure_block: str,
+    files: list[dict[str, str]],
+) -> str:
+    parts: list[str] = []
+    if structure_block.strip():
+        parts.append(structure_block.strip())
+    for item in files:
+        parts.append(f"FILE: {item['path']}\n{item['content'].rstrip()}")
+    return "\n\n".join(parts).rstrip() + "\n"
+
+
+def normalize_generation_output(
+    raw_output: str,
+    plan: Plan,
+    *,
+    require_structure: bool,
+) -> tuple[str, list[str]]:
+    """Normalize generator output before validation.
+
+    If the model omits the structure block but returns FILE sections, synthesize
+    the structure from the planner so the output contract stays stable.
+    """
+    files, _ = parse_file_blocks(raw_output)
+    if not files:
+        return raw_output, []
+
+    structure_block = extract_structure_block(raw_output)
+    notes: list[str] = []
+    if require_structure and not structure_block and plan.project_structure.strip():
+        structure_block = plan.project_structure.strip()
+        notes.append("Prepended the planner structure block because the model omitted it.")
+
+    if not notes:
+        return raw_output, []
+    return _serialize_generation_output(structure_block, files), notes
+
+
+def _replace_request_imports(content: str) -> tuple[str, bool]:
+    pattern = re.compile(r"^(\s*)from\s+fastapi\.requests\s+import\s+(.+?)\s*$", re.MULTILINE)
+
+    def repl(match: re.Match[str]) -> str:
+        indent, names = match.groups()
+        return f"{indent}from fastapi import {names}"
+
+    updated, count = pattern.subn(repl, content)
+    return updated, count > 0
+
+
+def _replace_basesettings_imports(content: str) -> tuple[str, bool]:
+    lines = content.splitlines()
+    updated_lines: list[str] = []
+    changed = False
+    has_target_import = "from pydantic_settings import BaseSettings" in content
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("from pydantic import ") or "BaseSettings" not in stripped:
+            updated_lines.append(line)
+            continue
+
+        indent = line[: len(line) - len(line.lstrip())]
+        imported_names = [name.strip() for name in stripped.split("import", 1)[1].split(",")]
+        remaining = [name for name in imported_names if name != "BaseSettings"]
+        if not has_target_import:
+            updated_lines.append(f"{indent}from pydantic_settings import BaseSettings")
+            has_target_import = True
+        if remaining:
+            updated_lines.append(f"{indent}from pydantic import {', '.join(remaining)}")
+        changed = True
+
+    updated = "\n".join(updated_lines)
+    if content.endswith("\n"):
+        updated += "\n"
+    return updated, changed
+
+
+def _package_name(requirement: str) -> str:
+    return re.split(r"[<>=!~\[]", requirement.strip(), maxsplit=1)[0].strip().lower()
+
+
+def _version_tuple(value: str) -> tuple[int, ...]:
+    parts = re.findall(r"\d+", value)
+    return tuple(int(part) for part in parts[:3])
+
+
+def _ensure_requirement(
+    requirements: list[str],
+    package: str,
+    preferred_spec: str,
+    minimum: tuple[int, ...] | None = None,
+) -> tuple[list[str], bool]:
+    changed = False
+    found_index: int | None = None
+
+    for index, line in enumerate(requirements):
+        if _package_name(line) != package:
+            continue
+        found_index = index
+        if minimum is not None and "==" in line and _version_tuple(line) < minimum:
+            requirements[index] = preferred_spec
+            changed = True
+        return requirements, changed
+
+    requirements.append(preferred_spec)
+    return requirements, True
+
+
+def repair_generation_output(
+    raw_output: str,
+    plan: Plan,
+    validation_errors: list[str],
+) -> tuple[str, list[str]]:
+    """Apply deterministic repairs for recurring framework issues."""
+    files, _ = parse_file_blocks(raw_output)
+    if not files:
+        return raw_output, []
+
+    notes: list[str] = []
+    joined_errors = "\n".join(validation_errors)
+    structure_block = extract_structure_block(raw_output) or plan.project_structure.strip()
+    path_to_content = {item["path"]: item["content"] for item in files}
+
+    for path, content in list(path_to_content.items()):
+        updated = content
+        changed = False
+
+        if "fastapi.requests" in updated:
+            updated, request_changed = _replace_request_imports(updated)
+            if request_changed:
+                changed = True
+                notes.append(f"Normalized FastAPI Request imports in {path}.")
+
+        if "BaseSettings" in updated and "from pydantic import" in updated:
+            updated, settings_changed = _replace_basesettings_imports(updated)
+            if settings_changed:
+                changed = True
+                notes.append(f"Moved BaseSettings imports to pydantic_settings in {path}.")
+
+        if changed:
+            path_to_content[path] = updated
+
+    if "requirements.txt" in path_to_content:
+        requirements = [
+            line.strip()
+            for line in path_to_content["requirements.txt"].splitlines()
+            if line.strip()
+        ]
+        req_changed = False
+
+        if any(
+            "from pydantic_settings import BaseSettings" in content
+            or "import pydantic_settings" in content
+            for content in path_to_content.values()
+        ):
+            requirements, changed = _ensure_requirement(
+                requirements,
+                "pydantic-settings",
+                "pydantic-settings>=2.2,<3",
+            )
+            req_changed = req_changed or changed
+
+        if "FastAPI version is too old for a modern production scaffold" in joined_errors:
+            requirements, changed = _ensure_requirement(
+                requirements,
+                "fastapi",
+                "fastapi>=0.110,<1",
+                minimum=_FASTAPI_MIN_VERSION,
+            )
+            req_changed = req_changed or changed
+
+        if "Uvicorn version is too old for the generated project" in joined_errors:
+            requirements, changed = _ensure_requirement(
+                requirements,
+                "uvicorn",
+                "uvicorn>=0.29,<1",
+                minimum=_UVICORN_MIN_VERSION,
+            )
+            req_changed = req_changed or changed
+
+        if req_changed:
+            path_to_content["requirements.txt"] = "\n".join(requirements).rstrip() + "\n"
+            notes.append("Normalized generated Python dependency versions in requirements.txt.")
+
+    if not notes:
+        return raw_output, []
+
+    ordered_files = [
+        {"path": item["path"], "content": path_to_content[item["path"]]}
+        for item in files
+    ]
+    return _serialize_generation_output(structure_block, ordered_files), list(dict.fromkeys(notes))
 
 
 def validate_generation_output(

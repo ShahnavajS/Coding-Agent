@@ -3,14 +3,26 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from pathlib import Path
 
 from assistant_backend.core.models import Plan, PlanStep, RiskLevel
 
 logger = logging.getLogger(__name__)
 
-_HIGH_RISK_TOKENS = frozenset({"delete", "remove", "drop", "reset", "wipe", "purge"})
-_LOW_RISK_TOKENS = frozenset({"read", "inspect", "explain", "show", "list", "describe"})
-_CODE_REQUEST_TOKENS = frozenset({"make", "create", "build", "write", "implement", "generate", "add"})
+_HIGH_RISK_TOKENS = frozenset({"delete", "remove", "drop", "reset", "wipe", "purge", "truncate", "overwrite"})
+_LOW_RISK_TOKENS  = frozenset({"read", "inspect", "explain", "show", "list", "describe", "summarize", "print"})
+_CODE_REQUEST_TOKENS = frozenset({
+    "make", "create", "build", "write", "implement", "generate", "add", "fix",
+    "update", "edit", "refactor", "convert", "migrate", "scaffold", "bootstrap",
+})
+_EDIT_TOKENS = frozenset(
+    {"fix", "edit", "update", "change", "refactor", "rename", "patch", "repair"}
+)
+
+# Characters to read from each file of interest for codebase context
+_MAX_SNIPPET_CHARS = 1_500
+# Maximum number of workspace files to read as snippets
+_MAX_SNIPPET_FILES = 6
 _FILE_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_./-])([A-Za-z0-9_./-]+?\.(?:py|tsx|jsx|ts|js|json|md|html|css|yml|yaml|txt))(?![A-Za-z0-9_./-])"
 )
@@ -74,9 +86,12 @@ def _infer_service_structure(lowered: str) -> list[str]:
         "README.md",
         "requirements.txt",
         ".env.example",
+        "app/__init__.py",
         "app/main.py",
         "app/config.py",
         "app/observability.py",
+        "app/models.py",
+        "app/services/__init__.py",
         "app/services/rate_limiter.py",
         "app/services/retry_policy.py",
     ]
@@ -85,9 +100,9 @@ def _infer_service_structure(lowered: str) -> list[str]:
         inferred.extend(
             [
                 "ARCHITECTURE.md",
-                "app/models.py",
                 "app/schemas.py",
                 "app/websocket_manager.py",
+                "app/routes/__init__.py",
                 "app/routes/http.py",
                 "app/routes/websocket.py",
                 "app/services/chat_service.py",
@@ -127,49 +142,81 @@ def _infer_default_structure(message: str, explicit_files: list[str]) -> list[st
     inferred = list(explicit_files)
     has_explicit_structure = len(explicit_files) >= 3
 
+    # ── Full-stack: FastAPI + React ────────────────────────────────────────────
     if (
         ("full-stack" in lowered or "full stack" in lowered or "backend" in lowered)
         and "fastapi" in lowered
         and "react" in lowered
     ):
-        inferred.extend(
-            [
-                "README.md",
-                ".env.example",
-                "requirements.txt",
-                "backend/app/main.py",
-                "backend/app/config.py",
-                "backend/app/database.py",
-                "backend/app/models.py",
-                "backend/app/schemas.py",
-                "backend/app/security.py",
-                "backend/app/routes.py",
-                "backend/app/services.py",
-                "frontend/package.json",
-                "frontend/tsconfig.json",
-                "frontend/vite.config.ts",
-                "frontend/index.html",
-                "frontend/src/main.tsx",
-                "frontend/src/App.tsx",
-                "frontend/src/pages/LoginPage.tsx",
-                "frontend/src/pages/TodosPage.tsx",
-                "frontend/src/components/TodoFilters.tsx",
-                "frontend/src/styles.css",
-            ]
-        )
+        inferred.extend([
+            "README.md", ".env.example", "requirements.txt",
+            "backend/app/main.py", "backend/app/config.py", "backend/app/database.py",
+            "backend/app/models.py", "backend/app/schemas.py", "backend/app/security.py",
+            "backend/app/routes.py", "backend/app/services.py",
+            "frontend/package.json", "frontend/tsconfig.json", "frontend/vite.config.ts",
+            "frontend/index.html", "frontend/src/main.tsx", "frontend/src/App.tsx",
+            "frontend/src/pages/LoginPage.tsx", "frontend/src/pages/TodosPage.tsx",
+            "frontend/src/components/TodoFilters.tsx", "frontend/src/styles.css",
+        ])
+
+    # ── Full-stack: Django + React ─────────────────────────────────────────────
+    elif "django" in lowered and ("react" in lowered or "frontend" in lowered):
+        inferred.extend([
+            "README.md", ".env.example", "requirements.txt",
+            "manage.py", "config/settings.py", "config/urls.py", "config/wsgi.py",
+            "apps/core/models.py", "apps/core/views.py", "apps/core/serializers.py",
+            "apps/core/urls.py", "apps/core/admin.py",
+            "frontend/package.json", "frontend/vite.config.ts",
+            "frontend/src/main.tsx", "frontend/src/App.tsx",
+        ])
+
+    # ── Next.js app ────────────────────────────────────────────────────────────
+    elif "next.js" in lowered or "nextjs" in lowered or "next js" in lowered:
+        inferred.extend([
+            "README.md", "package.json", "tsconfig.json", "next.config.ts",
+            ".env.local", "app/layout.tsx", "app/page.tsx", "app/globals.css",
+            "app/api/route.ts", "components/ui/Button.tsx", "lib/utils.ts",
+        ])
+
+    # ── Service architecture ────────────────────────────────────────────────────
     elif _looks_like_service_architecture_request(lowered, has_explicit_structure):
         inferred.extend(_infer_service_structure(lowered))
+
+    # ── Data pipeline / ETL ────────────────────────────────────────────────────
+    elif any(tok in lowered for tok in ("pipeline", "etl", "data pipeline", "airflow", "prefect")):
+        inferred.extend([
+            "README.md", "requirements.txt", ".env.example",
+            "pipeline/config.py", "pipeline/extract.py", "pipeline/transform.py",
+            "pipeline/load.py", "pipeline/runner.py", "pipeline/models.py",
+            "tests/test_pipeline.py", "Makefile",
+        ])
+
+    # ── Machine learning / AI ──────────────────────────────────────────────────
+    elif any(tok in lowered for tok in ("train", "model", "dataset", "pytorch", "tensorflow", "sklearn", "ml ", "machine learning")):
+        inferred.extend([
+            "README.md", "requirements.txt", ".env.example",
+            "src/config.py", "src/data/dataset.py", "src/data/preprocessing.py",
+            "src/models/model.py", "src/training/trainer.py",
+            "src/evaluation/metrics.py", "src/inference.py",
+            "notebooks/exploration.ipynb", "tests/test_model.py",
+        ])
+
+    # ── CLI tool ───────────────────────────────────────────────────────────────
+    elif any(tok in lowered for tok in ("cli", "command line", "command-line", "terminal tool", "argparse", "typer", "click")):
+        inferred.extend([
+            "README.md", "requirements.txt", "setup.py",
+            "cli/main.py", "cli/commands.py", "cli/config.py", "cli/utils.py",
+            "tests/test_commands.py",
+        ])
+
+    # ── Calculator (legacy) ────────────────────────────────────────────────────
     elif not has_explicit_structure and "calculator" in lowered:
-        inferred.extend(
-            [
-                "app.py",
-                "calculator.py",
-                "operations.py",
-                "cli.py",
-                "tests/test_calculator.py",
-                "README.md",
-            ]
-        )
+        inferred.extend([
+            "app.py", "calculator.py", "operations.py", "cli.py",
+            "tests/test_calculator.py", "README.md",
+        ])
+
+    # ── Generic API / backend ──────────────────────────────────────────────────
     elif (
         not has_explicit_structure
         and (
@@ -178,17 +225,12 @@ def _infer_default_structure(message: str, explicit_files: list[str]) -> list[st
             or _contains_word(lowered, "server")
         )
     ):
-        inferred.extend(
-            [
-                "app.py",
-                "routes.py",
-                "service.py",
-                "models.py",
-                "storage.py",
-                "requirements.txt",
-                "README.md",
-            ]
-        )
+        inferred.extend([
+            "app.py", "routes.py", "service.py", "models.py",
+            "storage.py", "requirements.txt", "README.md",
+        ])
+
+    # ── Frontend / React ───────────────────────────────────────────────────────
     elif (
         not has_explicit_structure
         and (
@@ -197,30 +239,21 @@ def _infer_default_structure(message: str, explicit_files: list[str]) -> list[st
             or _contains_word(lowered, "ui")
         )
     ):
-        inferred.extend(
-            [
-                "src/App.tsx",
-                "src/components/AppShell.tsx",
-                "src/components/Sidebar.tsx",
-                "src/lib/types.ts",
-                "src/styles/app.css",
-                "README.md",
-            ]
-        )
+        inferred.extend([
+            "src/App.tsx", "src/components/AppShell.tsx", "src/components/Sidebar.tsx",
+            "src/lib/types.ts", "src/styles/app.css", "README.md",
+        ])
+
+    # ── Generic code request ───────────────────────────────────────────────────
     elif not has_explicit_structure and _is_code_request(message):
-        inferred.extend(
-            [
-                "app.py",
-                "core.py",
-                "cli.py",
-                "tests/test_app.py",
-                "README.md",
-            ]
-        )
+        inferred.extend([
+            "app.py", "core.py", "cli.py", "tests/test_app.py", "README.md",
+        ])
 
     if _needs_architecture_notes(lowered) and "ARCHITECTURE.md" not in inferred:
         inferred.append("ARCHITECTURE.md")
 
+    # Deduplicate while preserving order
     deduped: list[str] = []
     seen: set[str] = set()
     for path in inferred:
@@ -261,6 +294,28 @@ def _render_tree(paths: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _collect_file_snippets(
+    files_of_interest: list[str],
+) -> dict[str, str]:
+    """Read snippets of the most relevant workspace files for codebase context.
+
+    Imports filesystem_tool lazily to avoid circular imports at module load time.
+    Returns empty dict if the workspace is inaccessible.
+    """
+    from assistant_backend.tools.filesystem_tool import read_text_file  # local import
+
+    snippets: dict[str, str] = {}
+    for path in files_of_interest[:_MAX_SNIPPET_FILES]:
+        try:
+            content = read_text_file(path)
+            if len(content) > _MAX_SNIPPET_CHARS:
+                content = content[:_MAX_SNIPPET_CHARS] + "\n… (truncated)"
+            snippets[path] = content
+        except Exception as exc:
+            logger.debug("planner: could not read snippet for %r: %s", path, exc)
+    return snippets
+
+
 def create_plan(message: str, workspace_files: list[str]) -> Plan:
     risk_level = _classify_risk(message)
     explicit_files = _extract_explicit_files(message)
@@ -270,11 +325,15 @@ def create_plan(message: str, workspace_files: list[str]) -> Plan:
     )[:8]
     project_structure = _render_tree(expected_files)
 
+    # Collect file snippets for codebase-aware generation
+    file_snippets = _collect_file_snippets(files_of_interest)
+
     logger.debug(
-        "Plan created: risk=%s files=%s expected=%s",
+        "Plan created: risk=%s files=%s expected=%s snippets=%d",
         risk_level,
         files_of_interest,
         expected_files,
+        len(file_snippets),
     )
 
     steps = [
@@ -307,12 +366,14 @@ def create_plan(message: str, workspace_files: list[str]) -> Plan:
         expected_files=expected_files,
         expected_file_count=len(expected_files),
         project_structure=project_structure,
+        file_snippets=file_snippets,
         validation_plan=[
             "strict FILE block parse",
             "planned structure check",
             "expected file count check",
             "per-file syntax validation",
             "project-level import and dependency validation",
+            "semantic reviewer pass",
             "direct workspace write",
         ],
         steps=steps,

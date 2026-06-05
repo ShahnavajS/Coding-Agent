@@ -20,7 +20,7 @@ export interface EditorTab {
 export interface AgentStep {
   id: string;
   name: string;
-  status: "pending" | "in-progress" | "completed" | "failed";
+  status: "pending" | "in-progress" | "running" | "completed" | "failed";
   description: string;
   details?: string;
   error?: string;
@@ -85,6 +85,24 @@ export interface AppSettings {
   corsOrigins: string[];
   defaultProvider: string;
   shellTimeoutSeconds: number;
+  webSearch?: {
+    enabled: boolean;
+    provider: string;
+    timeoutSeconds: number;
+    maxResults: number;
+    cacheTtlSeconds: number;
+  };
+  dockerSandbox?: {
+    enabled: boolean;
+    failOnError: boolean;
+    timeoutSeconds: number;
+    network: string;
+    pythonImage: string;
+    nodeImage: string;
+    memory: string;
+    cpus: string;
+    pidsLimit: number;
+  };
   providers: Record<string, ProviderSettings>;
 }
 
@@ -111,6 +129,7 @@ export interface AppState {
   theme: "dark" | "light";
   statusText: string;
   currentBranch: string;
+  isStreaming?: boolean;
 }
 
 export interface AIAgentResponse {

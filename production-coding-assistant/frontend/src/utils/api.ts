@@ -22,7 +22,7 @@ export interface AgentResponse {
   steps: Array<{
     id: string;
     name: string;
-    status: "completed" | "in-progress" | "failed" | "pending";
+    status: "completed" | "in-progress" | "running" | "failed" | "pending";
     description: string;
     details?: string;
   }>;
@@ -34,6 +34,15 @@ export interface AgentResponse {
     model?: string;
     error?: string;
   };
+}
+
+export interface StreamDonePayload {
+  fullText: string;
+  sessionId: string;
+  filesModified?: string[];
+  steps?: AgentResponse["steps"];
+  providerStatus?: AgentResponse["providerStatus"];
+  mode?: string;
 }
 
 export interface TerminalOutput {
@@ -216,6 +225,93 @@ export const agentAPI = {
       throw new Error("No agent response returned");
     }
     return data.data;
+  },
+
+  decompose: async (
+    message: string,
+    sessionId: string | null,
+    context?: Record<string, unknown>
+  ): Promise<AgentResponse> => {
+    const data = await request<AgentResponse>("/agent/decompose", {
+      method: "POST",
+      body: JSON.stringify({ message, sessionId, context }),
+    });
+    if (!data.data) {
+      throw new Error("No agent response returned");
+    }
+    return data.data;
+  },
+
+  stream: async (
+    message: string,
+    sessionId: string | null,
+    context?: Record<string, unknown>,
+    handlers?: {
+      onToken?: (token: string) => void;
+      onDone?: (payload: StreamDonePayload) => void;
+      onError?: (err: Error) => void;
+    }
+  ): Promise<void> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/agent/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, sessionId, context }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Stream request failed: ${response.statusText}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body reader.");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        // Keep the last partial line in the buffer
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const jsonStr = line.replace("data: ", "").trim();
+          if (!jsonStr) continue;
+
+          try {
+            const parsed = JSON.parse(jsonStr);
+            if (parsed.type === "token") {
+              // Real-time text chunk
+              handlers?.onToken?.(parsed.token);
+            } else if (parsed.type === "done") {
+              handlers?.onDone?.({
+                fullText: parsed.fullText,
+                sessionId: parsed.sessionId,
+                filesModified: parsed.filesModified,
+                steps: parsed.steps,
+                providerStatus: parsed.providerStatus,
+                mode: parsed.mode,
+              });
+            } else if (parsed.type === "error") {
+              throw new Error(parsed.error);
+            }
+          } catch (e) {
+            if (e instanceof Error) {
+              throw e;
+            }
+            console.error("Failed to parse SSE JSON chunk", line, e);
+          }
+        }
+      }
+    } catch (err: any) {
+      handlers?.onError?.(err);
+      throw err;
+    }
   },
 
   getStatus: async (): Promise<{

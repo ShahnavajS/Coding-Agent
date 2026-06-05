@@ -54,6 +54,32 @@ class WebSearchSettings:
 
 
 @dataclass
+class DockerSandboxSettings:
+    enabled: bool = False
+    fail_on_error: bool = False
+    timeout_seconds: int = 90
+    network: str = "none"
+    python_image: str = "python:3.12-slim"
+    node_image: str = "node:22-alpine"
+    memory: str = "1g"
+    cpus: str = "1"
+    pids_limit: int = 128
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "failOnError": self.fail_on_error,
+            "timeoutSeconds": self.timeout_seconds,
+            "network": self.network,
+            "pythonImage": self.python_image,
+            "nodeImage": self.node_image,
+            "memory": self.memory,
+            "cpus": self.cpus,
+            "pidsLimit": self.pids_limit,
+        }
+
+
+@dataclass
 class AppSettings:
     workspace_path: str = str((PROJECT_ROOT / "workspace").resolve())
     backend_host: str = "0.0.0.0"
@@ -64,6 +90,7 @@ class AppSettings:
     default_provider: str = "ollama"
     shell_timeout_seconds: int = 30
     web_search: WebSearchSettings = field(default_factory=WebSearchSettings)
+    docker_sandbox: DockerSandboxSettings = field(default_factory=DockerSandboxSettings)
     providers: dict[str, ProviderConfig] = field(
         default_factory=lambda: {
             "openai": ProviderConfig(
@@ -116,6 +143,7 @@ class AppSettings:
             "defaultProvider": self.default_provider,
             "shellTimeoutSeconds": self.shell_timeout_seconds,
             "webSearch": self.web_search.to_public_dict(),
+            "dockerSandbox": self.docker_sandbox.to_public_dict(),
             "providers": providers,
         }
 
@@ -145,6 +173,35 @@ def _web_search_from_mapping(data: dict[str, Any], current: WebSearchSettings) -
         cache_ttl_seconds=_coerce_int(
             data.get("cacheTtlSeconds", data.get("cache_ttl_seconds")),
             current.cache_ttl_seconds,
+        ),
+    )
+
+
+def _docker_sandbox_from_mapping(
+    data: dict[str, Any],
+    current: DockerSandboxSettings,
+) -> DockerSandboxSettings:
+    return DockerSandboxSettings(
+        enabled=bool(data.get("enabled", current.enabled)),
+        fail_on_error=bool(
+            data.get("failOnError", data.get("fail_on_error", current.fail_on_error))
+        ),
+        timeout_seconds=_coerce_int(
+            data.get("timeoutSeconds", data.get("timeout_seconds")),
+            current.timeout_seconds,
+        ),
+        network=str(data.get("network", current.network)).strip() or current.network,
+        python_image=str(
+            data.get("pythonImage", data.get("python_image", current.python_image))
+        ).strip() or current.python_image,
+        node_image=str(
+            data.get("nodeImage", data.get("node_image", current.node_image))
+        ).strip() or current.node_image,
+        memory=str(data.get("memory", current.memory)).strip() or current.memory,
+        cpus=str(data.get("cpus", current.cpus)).strip() or current.cpus,
+        pids_limit=_coerce_int(
+            data.get("pidsLimit", data.get("pids_limit")),
+            current.pids_limit,
         ),
     )
 
@@ -212,6 +269,17 @@ def load_app_settings() -> AppSettings:
             max_results=_coerce_int(os.getenv("WEB_SEARCH_MAX_RESULTS"), 5),
             cache_ttl_seconds=_coerce_int(os.getenv("WEB_SEARCH_CACHE_TTL_SECONDS"), 900),
         ),
+        docker_sandbox=DockerSandboxSettings(
+            enabled=os.getenv("DOCKER_SANDBOX_ENABLED", "false").lower() == "true",
+            fail_on_error=os.getenv("DOCKER_SANDBOX_FAIL_ON_ERROR", "false").lower() == "true",
+            timeout_seconds=_coerce_int(os.getenv("DOCKER_SANDBOX_DEFAULT_TIMEOUT"), 90),
+            network=os.getenv("DOCKER_SANDBOX_NETWORK", "none"),
+            python_image=os.getenv("DOCKER_SANDBOX_PYTHON_IMAGE", "python:3.12-slim"),
+            node_image=os.getenv("DOCKER_SANDBOX_NODE_IMAGE", "node:22-alpine"),
+            memory=os.getenv("DOCKER_SANDBOX_MEMORY", "1g"),
+            cpus=os.getenv("DOCKER_SANDBOX_CPUS", "1"),
+            pids_limit=_coerce_int(os.getenv("DOCKER_SANDBOX_PIDS_LIMIT"), 128),
+        ),
     )
 
     if SETTINGS_PATH.exists():
@@ -230,6 +298,12 @@ def load_app_settings() -> AppSettings:
             settings.web_search = _web_search_from_mapping(
                 web_search_data,
                 settings.web_search,
+            )
+        docker_sandbox_data = raw.get("dockerSandbox", {})
+        if isinstance(docker_sandbox_data, dict):
+            settings.docker_sandbox = _docker_sandbox_from_mapping(
+                docker_sandbox_data,
+                settings.docker_sandbox,
             )
 
         provider_data = raw.get("providers", {})
@@ -283,6 +357,12 @@ def update_app_settings(payload: dict[str, Any]) -> AppSettings:
         settings.web_search = _web_search_from_mapping(
             web_search_payload,
             settings.web_search,
+        )
+    docker_sandbox_payload = payload.get("dockerSandbox")
+    if isinstance(docker_sandbox_payload, dict):
+        settings.docker_sandbox = _docker_sandbox_from_mapping(
+            docker_sandbox_payload,
+            settings.docker_sandbox,
         )
     provider_payload = payload.get("providers", {})
     for provider_name, provider_config in provider_payload.items():
